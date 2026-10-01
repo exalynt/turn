@@ -15,7 +15,31 @@ You need:
 - Go at the version in `go.mod` or newer.
 - [golangci-lint](https://golangci-lint.run/) v2.9.0, the version CI pins.
 
-There is nothing else to install: turn has no dependencies outside the standard library.
+There is nothing else to install to build turn or run its unit tests: turn has no dependencies outside the standard library.
+
+### Test databases
+
+Integration tests check that what turn hands back produces correct pages on real stores. They need [Docker](https://docs.docker.com/get-docker/) with Compose v2. `compose.yml` runs one container per database:
+
+| Service    | Image                | Connection from the host                                     |
+| ---------- | -------------------- | ------------------------------------------------------------ |
+| `postgres` | `postgres:18-alpine` | `postgres://turn:turn@localhost:5432/turn?sslmode=disable`   |
+| `mysql`    | `mysql:8.4`          | `turn:turn@tcp(localhost:3306)/turn`                         |
+| `mongo`    | `mongo:8`            | `mongodb://turn:turn@localhost:27017/turn?authSource=admin`  |
+
+Compose doesn't publish any ports by default. Copy the example override to publish them on the host ports above:
+
+```sh
+cp compose.override.example.yml compose.override.yml
+make up     # start the databases and wait until they are healthy
+make ps     # show each database and its health
+make down   # stop them
+make nuke   # stop them and delete their data
+```
+
+`compose.override.yml` is gitignored, so you can change it freely. If a port is already in use, for example by another project's Postgres on 5432, change the left-hand number in your override and use that port in the connection string.
+
+Each database keeps its data on a named volume, so data survives `make down`. Write tests that create and clean up their own tables or collections rather than relying on what's already there. Use `make nuke` to start over.
 
 ## Checks
 

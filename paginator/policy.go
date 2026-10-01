@@ -1,6 +1,6 @@
-package turn
+package paginator
 
-// Policy bounds the page sizes a request may ask for. Every strategy uses it.
+// Policy bounds the page sizes a request may ask for. Every paginator uses it.
 //
 // A zero MaxSize selects 100, and a zero DefaultSize selects 25 or MaxSize,
 // whichever is smaller, so the zero Policy defaults to 25 and allows up to 100.
@@ -15,7 +15,7 @@ type Policy struct {
 	MaxSize int
 }
 
-// Window is the size of a prepared query. Every strategy's plan embeds it.
+// Window is the size of a prepared query. Every paginator's plan embeds it.
 type Window struct {
 	// Size is the most items the page will hold. It is at least 1 in a
 	// prepared plan.

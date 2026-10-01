@@ -1,0 +1,67 @@
+# Databases for running integration tests locally. turn itself never talks to a
+# database; these are here so tests can check that the values it hands back
+# (limits, offsets, keys to page after) produce correct pages on real stores.
+#
+# Each database keeps its data on a named volume, so it survives restarts;
+# `make nuke` wipes them. None of the ports are published by default; copy
+# compose.override.example.yml to compose.override.yml to reach them from the
+# host.
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: turn
+      POSTGRES_PASSWORD: turn
+      POSTGRES_DB: turn
+    volumes:
+      # Postgres 18+ images keep data in a major-version subdirectory, so the
+      # volume mounts at /var/lib/postgresql, not /var/lib/postgresql/data.
+      - postgres-data:/var/lib/postgresql
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U turn -d turn"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: turn
+      MYSQL_USER: turn
+      MYSQL_PASSWORD: turn
+      MYSQL_DATABASE: turn
+    volumes:
+      - mysql-data:/var/lib/mysql
+    expose:
+      - "3306"
+    healthcheck:
+      # 127.0.0.1 forces TCP. The temporary server MySQL runs while it
+      # initializes listens only on the socket, so this passes only once the
+      # real server is up.
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-u", "turn", "-pturn"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mongo:
+    image: mongo:8
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: turn
+      MONGO_INITDB_ROOT_PASSWORD: turn
+      MONGO_INITDB_DATABASE: turn
+    volumes:
+      - mongo-data:/data/db
+    expose:
+      - "27017"
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
+  mysql-data:
+  mongo-data:

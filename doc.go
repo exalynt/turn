@@ -5,35 +5,15 @@
 // the result. It never builds or runs queries; the consumer owns query
 // construction, filtering, authorization, and record mapping.
 //
-// This package holds what every strategy shares: the size [Policy], the
-// prepared query [Window], the result [Page], and the errors. The paginators
-// themselves live in [github.com/exalynt/turn/strategy].
+// This package holds no code. The packages are:
 //
-// Every strategy follows the same flow: Prepare a plan from a request, run the
-// consumer's own query using the plan, then Finish the plan with the fetched
-// items to get a [Page].
-//
-//	plan, err := paginator.Prepare(request)
-//	// handle err
-//	rows, err := fetch(ctx, plan) // at most plan.FetchLimit() rows
-//	// handle err
-//	page, err := paginator.Finish(plan, rows)
-//
-// Each plan asks for one item more than the page size. Finish drops that
-// lookahead item and reports its presence as [Page.HasMore], so no strategy
-// needs a count query. Finish expects the complete result of the query: fewer
-// than FetchLimit items means the query was exhausted, so a failed or partial
-// fetch must be handled before calling it.
-//
-// Every strategy needs a deterministic canonical order, ideally ending with a
-// unique tie-breaker. None promises a consistent snapshot across requests.
-//
-// # Errors
-//
-// Invalid requests are reported with [ErrInvalidSize], [ErrInvalidPage],
-// [ErrOffsetTooLarge], [ErrInvalidDirection], and [ErrInvalidCursor], which a
-// handler can map to a client error with [errors.Is]. [ErrInvalidOptions],
-// [ErrInvalidPlan], and [ErrInvalidBatch] report misuse by the consuming code.
+//   - [github.com/exalynt/turn/paginator]: what every paginator shares, the
+//     size policy, the result page, and the errors.
+//   - [github.com/exalynt/turn/paginator/offset]: numbered pages.
+//   - [github.com/exalynt/turn/paginator/cursor]: keyset pagination.
+//   - [github.com/exalynt/turn/codec]: how cursor positions become opaque
+//     cursors, with a default implementation in
+//     [github.com/exalynt/turn/codec/plain].
 //
 // turn is in Alpha: it is still taking shape, so expect frequent breaking
 // changes. See https://readme.exalynt.com/how-it-works/stability-levels.

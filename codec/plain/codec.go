@@ -23,7 +23,7 @@ import (
 )
 
 // Errors reported by [Codec.Decode]. The cursor paginator wraps them with
-// turn.ErrInvalidCursor.
+// paginator.ErrInvalidCursor.
 var (
 	// ErrMalformed reports a cursor that is not valid base64url or whose
 	// contents do not decode into a position.

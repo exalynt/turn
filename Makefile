@@ -1,7 +1,24 @@
-.PHONY: help fix fmt lint vet test check coverage coverage-html
+.PHONY: help up down nuke logs ps fix fmt lint vet test check coverage coverage-html
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+## --- Test databases ---
+
+up: ## Start the test databases and wait until they are healthy
+	docker compose up -d --wait
+
+down: ## Stop the test databases
+	docker compose down
+
+nuke: ## Stop the test databases and destroy their volumes
+	docker compose down -v
+
+logs: ## Follow database logs
+	docker compose logs -f
+
+ps: ## Show the test databases and their health
+	docker compose ps
 
 ## --- Quality ---
 

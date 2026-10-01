@@ -1,0 +1,16 @@
+# Copy to compose.override.yml for local development.
+#
+# Publishes each database's port on the host so integration tests run with
+# `go test` can reach them on localhost. Change the left-hand numbers to use
+# different host ports, for example if another project's stack already holds
+# 5432.
+services:
+  postgres:
+    ports:
+      - "5432:5432"
+  mysql:
+    ports:
+      - "3306:3306"
+  mongo:
+    ports:
+      - "27017:27017"

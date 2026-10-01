@@ -1,6 +1,6 @@
 // Package codec defines how turn converts cursor positions to the opaque
 // [Cursor] values handed to clients and back. A [Codec] is supplied to
-// [github.com/exalynt/turn/strategy.CursorPaginator].
+// [github.com/exalynt/turn/paginator/cursor.Paginator].
 package codec
 
 // Cursor is an opaque, encoded position handed to clients for continuing a

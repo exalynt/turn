@@ -18,14 +18,15 @@ go get github.com/exalynt/turn
 
 turn needs Go 1.23 or newer.
 
-The root package holds what every strategy shares: `turn.Page`, `turn.Policy`, `turn.Window`, and the errors. The paginators live in the `strategy` package, the cursor codec interface in the `codec` package, and the default codec in `codec/plain`:
+The `paginator` package holds what every paginator shares: `paginator.Page`, `paginator.Policy`, `paginator.Window`, and the errors. The paginators themselves live in `paginator/offset` and `paginator/cursor`, the cursor codec interface in the `codec` package, and the default codec in `codec/plain`:
 
 ```go
 import (
-    "github.com/exalynt/turn"
     "github.com/exalynt/turn/codec"
     "github.com/exalynt/turn/codec/plain"
-    "github.com/exalynt/turn/strategy"
+    "github.com/exalynt/turn/paginator"
+    "github.com/exalynt/turn/paginator/cursor"
+    "github.com/exalynt/turn/paginator/offset"
 )
 ```
 
@@ -33,21 +34,21 @@ import (
 
 turn supports two strategies:
 
-- **Numbered pages** (`strategy.OffsetPaginator`): page 1, 2, 3, … backed by `LIMIT`/`OFFSET`.
-- **Cursors** (`strategy.CursorPaginator`): keyset pagination that continues from the last item a client saw.
+- **Numbered pages** (`offset.Paginator`): page 1, 2, 3, … backed by `LIMIT`/`OFFSET`.
+- **Cursors** (`cursor.Paginator`): keyset pagination that continues from the last item a client saw.
 
 Both follow the same three steps:
 
 1. **Prepare** a plan from the client's request. This validates the request and works out what your query needs.
 2. **Query** your own store using the plan, fetching at most `plan.FetchLimit()` items.
-3. **Finish** the plan with the fetched items to get a `turn.Page`.
+3. **Finish** the plan with the fetched items to get a `paginator.Page`.
 
 `FetchLimit()` is the page size plus one. That extra lookahead item tells `Finish` whether more items exist, so neither strategy needs a `COUNT` query. `Finish` removes it before returning the page.
 
 ```go
 type Page[T, I any] struct {
     Items   []T  // at most Size items, in canonical order; never nil
-    Info    I    // strategy.OffsetInfo or strategy.CursorInfo
+    Info    I    // offset.Info or cursor.Info
     HasMore bool // whether the query found items beyond this page
 }
 ```
@@ -69,16 +70,16 @@ type User struct {
 ### Set up
 
 ```go
-users, err := strategy.NewOffset[User](strategy.OffsetOptions{})
+users, err := offset.New[User](offset.Options{})
 ```
 
-The zero `OffsetOptions` uses the default size policy: 25 items by default and at most 100. To cap how deep clients can page, set `MaxOffset`:
+The zero `offset.Options` uses the default size policy: 25 items by default and at most 100. To cap how deep clients can page, set `MaxOffset`:
 
 ```go
 maxOffset := int64(10_000)
 
-users, err := strategy.NewOffset[User](strategy.OffsetOptions{
-    Policy:    turn.Policy{DefaultSize: 20, MaxSize: 50},
+users, err := offset.New[User](offset.Options{
+    Policy:    paginator.Policy{DefaultSize: 20, MaxSize: 50},
     MaxOffset: &maxOffset,
 })
 ```
@@ -86,10 +87,10 @@ users, err := strategy.NewOffset[User](strategy.OffsetOptions{
 ### List a page
 
 ```go
-func (r *UserRepository) ListByPage(ctx context.Context, request strategy.PageRequest) (turn.Page[User, strategy.OffsetInfo], error) {
+func (r *UserRepository) ListByPage(ctx context.Context, request offset.Request) (paginator.Page[User, offset.Info], error) {
     plan, err := r.offset.Prepare(request)
     if err != nil {
-        return turn.Page[User, strategy.OffsetInfo]{}, err
+        return paginator.Page[User, offset.Info]{}, err
     }
 
     rows, err := r.db.QueryContext(ctx, `
@@ -98,19 +99,19 @@ func (r *UserRepository) ListByPage(ctx context.Context, request strategy.PageRe
         LIMIT $1 OFFSET $2`,
         plan.FetchLimit(), plan.Offset)
     if err != nil {
-        return turn.Page[User, strategy.OffsetInfo]{}, err
+        return paginator.Page[User, offset.Info]{}, err
     }
 
     users, err := scanUsers(rows)
     if err != nil {
-        return turn.Page[User, strategy.OffsetInfo]{}, err
+        return paginator.Page[User, offset.Info]{}, err
     }
 
     return r.offset.Finish(plan, users)
 }
 ```
 
-`PageRequest{Number: 3, Size: 25}` prepares `Offset` 50 and `FetchLimit()` 26. A zero `Number` means page 1, and a zero `Size` means the policy's default. A page past the end of the data isn't an error; it comes back empty.
+`offset.Request{Number: 3, Size: 25}` prepares `Offset` 50 and `FetchLimit()` 26. A zero `Number` means page 1, and a zero `Size` means the policy's default. A page past the end of the data isn't an error; it comes back empty.
 
 ### Navigate
 
@@ -149,7 +150,7 @@ Keep these in mind when writing your own codec:
 ### Create the cursor paginator
 
 ```go
-users, err := strategy.NewCursor(strategy.CursorOptions[User, UserPosition]{
+users, err := cursor.New(cursor.Options[User, UserPosition]{
     Codec: plain.Codec[UserPosition]{},
     Position: func(u User) UserPosition {
         return UserPosition{CreatedAt: u.CreatedAt, ID: u.ID}
@@ -165,20 +166,20 @@ users, err := strategy.NewCursor(strategy.CursorOptions[User, UserPosition]{
 
 The plan tells your query where to start and which way to read:
 
-- **`strategy.Forward`** selects items strictly after `plan.Boundary`, in canonical order.
-- **`strategy.Backward`** selects items strictly before `plan.Boundary`, in **reverse** canonical order. `Finish` flips them back.
+- **`cursor.Forward`** selects items strictly after `plan.Boundary`, in canonical order.
+- **`cursor.Backward`** selects items strictly before `plan.Boundary`, in **reverse** canonical order. `Finish` flips them back.
 - A nil `Boundary` (no cursor in the request) starts at the beginning for `Forward` and at the end for `Backward`.
 
 ```go
-func (r *UserRepository) ListByCursor(ctx context.Context, request strategy.CursorRequest) (turn.Page[User, strategy.CursorInfo], error) {
+func (r *UserRepository) ListByCursor(ctx context.Context, request cursor.Request) (paginator.Page[User, cursor.Info], error) {
     plan, err := r.cursor.Prepare(request, "users:created_at_desc")
     if err != nil {
-        return turn.Page[User, strategy.CursorInfo]{}, err
+        return paginator.Page[User, cursor.Info]{}, err
     }
 
     // Canonical order is newest first; Backward reads the reverse.
     order, compare := "DESC", "<"
-    if plan.Direction == strategy.Backward {
+    if plan.Direction == cursor.Backward {
         order, compare = "ASC", ">"
     }
 
@@ -193,12 +194,12 @@ func (r *UserRepository) ListByCursor(ctx context.Context, request strategy.Curs
 
     rows, err := r.db.QueryContext(ctx, query, args...)
     if err != nil {
-        return turn.Page[User, strategy.CursorInfo]{}, err
+        return paginator.Page[User, cursor.Info]{}, err
     }
 
     users, err := scanUsers(rows)
     if err != nil {
-        return turn.Page[User, strategy.CursorInfo]{}, err
+        return paginator.Page[User, cursor.Info]{}, err
     }
 
     return r.cursor.Finish(plan, users)
@@ -214,11 +215,11 @@ If the listing has filters, apply the same filters to the query and include them
 ```go
 // Next page, reading forward.
 if page.HasMore {
-    next := strategy.CursorRequest{Cursor: page.Info.EndCursor}
+    next := cursor.Request{Cursor: page.Info.EndCursor}
 }
 
 // Previous page, reading backward.
-previous := strategy.CursorRequest{Direction: strategy.Backward, Cursor: page.Info.StartCursor}
+previous := cursor.Request{Direction: cursor.Backward, Cursor: page.Info.StartCursor}
 ```
 
 `HasMore` only covers the direction the page was read in. A forward page doesn't report whether earlier items exist, and a backward page doesn't report whether later ones do.
@@ -229,7 +230,7 @@ turn doesn't parse requests or write responses, so your handler does both. Use `
 
 ```go
 func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
-    var request strategy.PageRequest
+    var request offset.Request
     var err error
     if v := r.URL.Query().Get("page"); v != "" {
         if request.Number, err = strconv.ParseInt(v, 10, 64); err != nil {
@@ -263,11 +264,11 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 }
 
 func isBadRequest(err error) bool {
-    return errors.Is(err, turn.ErrInvalidSize) ||
-        errors.Is(err, turn.ErrInvalidPage) ||
-        errors.Is(err, turn.ErrOffsetTooLarge) ||
-        errors.Is(err, turn.ErrInvalidDirection) ||
-        errors.Is(err, turn.ErrInvalidCursor)
+    return errors.Is(err, paginator.ErrInvalidSize) ||
+        errors.Is(err, paginator.ErrInvalidPage) ||
+        errors.Is(err, paginator.ErrOffsetTooLarge) ||
+        errors.Is(err, paginator.ErrInvalidDirection) ||
+        errors.Is(err, paginator.ErrInvalidCursor)
 }
 ```
 
