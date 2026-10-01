@@ -9,7 +9,7 @@ import (
 	"github.com/exalynt/turn/paginator"
 )
 
-// Direction is the direction a cursor request reads relative to the listing's
+// Direction is the direction a cursor selector reads relative to the listing's
 // canonical order. The zero Direction is Forward.
 type Direction uint8
 
@@ -26,10 +26,10 @@ func (d Direction) valid() bool {
 	return d <= Backward
 }
 
-// Request asks for a batch of items next to a cursor. The zero
-// Request asks for the first batch, reading forward, at the policy's
+// Selector selects a batch of items next to a cursor. The zero
+// Selector selects the first batch, reading forward, at the policy's
 // default size.
-type Request struct {
+type Selector struct {
 	// Direction is the direction to read from Cursor. Values other than
 	// Forward and Backward are rejected with paginator.ErrInvalidDirection.
 	Direction Direction
@@ -40,7 +40,7 @@ type Request struct {
 	Size int
 
 	// Cursor is the exclusive boundary to read from. When empty, a Forward
-	// request starts at the beginning of the listing and a Backward request
+	// selector starts at the beginning of the listing and a Backward selector
 	// at the end.
 	Cursor codec.Cursor
 }
@@ -54,28 +54,38 @@ type Request struct {
 // items.
 //
 // Create plans with [Paginator.Prepare] and pass them to Finish
-// unchanged; a plan carries the scope it was prepared for.
+// unchanged; a plan carries the scope and cursor it was prepared for.
 type Plan[P any] struct {
 	paginator.Window
 
 	// Direction is the direction the query reads.
 	Direction Direction
 
-	// Boundary is the decoded request cursor, or nil if the request had none.
+	// Boundary is the decoded selector cursor, or nil if the selector had none.
 	Boundary *P
 
-	scope string
+	scope  string
+	cursor codec.Cursor
 }
 
 // Info describes a cursor page.
 //
-// To continue reading forward, request EndCursor with Forward while
+// To continue reading forward, select EndCursor with Forward while
 // [paginator.Page.HasMore] is true on a Forward page; to continue backward,
-// request StartCursor with Backward while HasMore is true on a Backward page.
-// Whether items exist in the opposite direction is not reported.
+// select StartCursor with Backward while HasMore is true on a Backward page.
+// Whether items exist in the opposite direction is not reported, but a
+// non-empty Cursor means the page was read from a boundary, so items existed
+// on its other side when the cursor was issued.
 type Info struct {
 	// Direction is the direction the page was read in.
 	Direction Direction
+
+	// Size is the page size the page was prepared with.
+	Size int
+
+	// Cursor is the selector's cursor the page was read from, or empty if the
+	// selector had none.
+	Cursor codec.Cursor
 
 	// StartCursor is the position of the first item in canonical order, or
 	// empty if the page has no items.
@@ -128,24 +138,24 @@ func New[T, P any](options Options[T, P]) (*Paginator[T, P], error) {
 	return &Paginator[T, P]{policy: policy, codec: options.Codec, position: options.Position}, nil
 }
 
-// Prepare validates request, decodes its cursor for scope, and returns the
+// Prepare validates selector, decodes its cursor for scope, and returns the
 // plan for the consumer's query.
 //
 // It returns an error wrapping [paginator.ErrInvalidDirection] or
-// [paginator.ErrInvalidSize] for an invalid request, and
+// [paginator.ErrInvalidSize] for an invalid selector, and
 // [paginator.ErrInvalidCursor], together with the codec's error, if the cursor
 // does not decode for scope.
-func (p *Paginator[T, P]) Prepare(request Request, scope string) (Plan[P], error) {
-	if !request.Direction.valid() {
-		return Plan[P]{}, fmt.Errorf("%w: %d", paginator.ErrInvalidDirection, request.Direction)
+func (p *Paginator[T, P]) Prepare(selector Selector, scope string) (Plan[P], error) {
+	if !selector.Direction.valid() {
+		return Plan[P]{}, fmt.Errorf("%w: %d", paginator.ErrInvalidDirection, selector.Direction)
 	}
-	window, err := paging.NewWindow(p.policy, request.Size)
+	window, err := paging.NewWindow(p.policy, selector.Size)
 	if err != nil {
 		return Plan[P]{}, err
 	}
-	plan := Plan[P]{Window: window, Direction: request.Direction, scope: scope}
-	if request.Cursor != "" {
-		boundary, err := p.codec.Decode(request.Cursor, scope)
+	plan := Plan[P]{Window: window, Direction: selector.Direction, scope: scope, cursor: selector.Cursor}
+	if selector.Cursor != "" {
+		boundary, err := p.codec.Decode(selector.Cursor, scope)
 		if err != nil {
 			return Plan[P]{}, fmt.Errorf("%w: %w", paginator.ErrInvalidCursor, err)
 		}
@@ -175,7 +185,7 @@ func (p *Paginator[T, P]) Finish(plan Plan[P], items []T) (paginator.Page[T, Inf
 		kept = slices.Clone(kept)
 		slices.Reverse(kept)
 	}
-	info := Info{Direction: plan.Direction}
+	info := Info{Direction: plan.Direction, Size: plan.Size, Cursor: plan.cursor}
 	if len(kept) > 0 {
 		if info.StartCursor, err = p.encode(kept[0], plan.scope); err != nil {
 			return paginator.Page[T, Info]{}, err

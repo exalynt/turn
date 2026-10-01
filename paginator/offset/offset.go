@@ -8,9 +8,9 @@ import (
 	"github.com/exalynt/turn/paginator"
 )
 
-// Request asks for a numbered page. The zero Request asks for page 1
+// Selector selects a numbered page. The zero Selector selects page 1
 // at the policy's default size.
-type Request struct {
+type Selector struct {
 	// Number is the one-based page number. Zero selects page 1, and negative
 	// numbers are rejected with paginator.ErrInvalidPage.
 	Number int64
@@ -40,7 +40,7 @@ type Plan struct {
 //
 // When [paginator.Page.HasMore] is true, page Number + 1 continues the listing.
 // A Number above 1 permits navigating to an earlier page, but does not
-// establish that earlier pages still hold items. Requesting a different Size
+// establish that earlier pages still hold items. Selecting a different Size
 // changes which items each page number covers.
 type Info struct {
 	// Number is the one-based page number.
@@ -55,7 +55,7 @@ type Options struct {
 	// Policy bounds the requested page size.
 	Policy paginator.Policy
 
-	// MaxOffset, when not nil, caps the offset a request may reach; deeper
+	// MaxOffset, when not nil, caps the offset a selector may reach; deeper
 	// pages are rejected with paginator.ErrOffsetTooLarge. It must not be
 	// negative. When nil, only the int64 range limits the offset.
 	MaxOffset *int64
@@ -87,19 +87,19 @@ func New[T any](options Options) (*Paginator[T], error) {
 	return &Paginator[T]{policy: policy, maxOffset: maxOffset}, nil
 }
 
-// Prepare validates request and returns the plan for the consumer's query.
+// Prepare validates selector and returns the plan for the consumer's query.
 //
 // It returns an error wrapping [paginator.ErrInvalidSize] or
-// [paginator.ErrInvalidPage] for an invalid request, and
+// [paginator.ErrInvalidPage] for an invalid selector, and
 // [paginator.ErrOffsetTooLarge] if the page's offset exceeds MaxOffset or the
 // int64 range. A page past the end of the data is not an error; it finishes as
 // an empty page.
-func (p *Paginator[T]) Prepare(request Request) (Plan, error) {
-	window, err := paging.NewWindow(p.policy, request.Size)
+func (p *Paginator[T]) Prepare(selector Selector) (Plan, error) {
+	window, err := paging.NewWindow(p.policy, selector.Size)
 	if err != nil {
 		return Plan{}, err
 	}
-	number := request.Number
+	number := selector.Number
 	switch {
 	case number == 0:
 		number = 1

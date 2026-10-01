@@ -17,7 +17,7 @@ var (
 	// configured MaxOffset or the int64 range.
 	ErrOffsetTooLarge = errors.New("turn: offset too large")
 
-	// ErrInvalidDirection reports a cursor request direction other than
+	// ErrInvalidDirection reports a cursor selector direction other than
 	// Forward or Backward.
 	ErrInvalidDirection = errors.New("turn: invalid direction")
 

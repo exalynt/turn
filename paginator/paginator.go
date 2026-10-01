@@ -4,11 +4,11 @@
 // [github.com/exalynt/turn/paginator/offset] serves numbered pages and
 // [github.com/exalynt/turn/paginator/cursor] serves keyset pagination.
 //
-// Every paginator follows the same flow: Prepare a plan from a request, run the
-// consumer's own query using the plan, then Finish the plan with the fetched
-// items to get a [Page].
+// Every paginator follows the same flow: Prepare a plan from a selector, run
+// the consumer's own query using the plan, then Finish the plan with the
+// fetched items to get a [Page].
 //
-//	plan, err := p.Prepare(request)
+//	plan, err := p.Prepare(selector)
 //	// handle err
 //	rows, err := fetch(ctx, plan) // at most plan.FetchLimit() rows
 //	// handle err

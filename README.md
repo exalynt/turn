@@ -4,7 +4,7 @@
 
 A lightweight Go library for cursor and page-based pagination.
 
-turn handles the parts of pagination every service repeats: bounding the requested page size, turning a request into what a query needs, and shaping the result. It never builds or runs queries, and it depends only on the standard library. Your code keeps ownership of query construction, filters, authorization, record mapping, and the response format.
+turn handles the parts of pagination every service repeats: bounding the requested page size, turning a page selection into what a query needs, and shaping the result. It never builds or runs queries, and it depends only on the standard library. Your code keeps ownership of query construction, filters, authorization, record mapping, and the response format.
 
 ## Stability
 
@@ -18,17 +18,20 @@ go get github.com/exalynt/turn
 
 turn needs Go 1.23 or newer.
 
-The `paginator` package holds what every paginator shares: `paginator.Page`, `paginator.Policy`, `paginator.Window`, and the errors. The paginators themselves live in `paginator/offset` and `paginator/cursor`, the cursor codec interface in the `codec` package, and the default codec in `codec/plain`:
+The `paginator` package holds what every paginator shares: `paginator.Page`, `paginator.Policy`, `paginator.Window`, and the errors. The paginators themselves live in `paginator/offset` and `paginator/cursor`, the cursor codec interface in the `codec` package, the default codec in `codec/plain`, and an optional HTTP layer for query parameters and `Link` headers in `http`:
 
 ```go
 import (
     "github.com/exalynt/turn/codec"
     "github.com/exalynt/turn/codec/plain"
+    turnhttp "github.com/exalynt/turn/http"
     "github.com/exalynt/turn/paginator"
     "github.com/exalynt/turn/paginator/cursor"
     "github.com/exalynt/turn/paginator/offset"
 )
 ```
+
+turn's `http` package shares its name with `net/http`, so the examples import it as `turnhttp`.
 
 ## How it works
 
@@ -39,7 +42,7 @@ turn supports two strategies:
 
 Both follow the same three steps:
 
-1. **Prepare** a plan from the client's request. This validates the request and works out what your query needs.
+1. **Prepare** a plan from a selector, which says which page the client wants. This validates the selector and works out what your query needs.
 2. **Query** your own store using the plan, fetching at most `plan.FetchLimit()` items.
 3. **Finish** the plan with the fetched items to get a `paginator.Page`.
 
@@ -53,7 +56,7 @@ type Page[T, I any] struct {
 }
 ```
 
-Create a paginator once per listing, for example when you build a repository, and reuse it. Paginators are safe for concurrent use. Everything specific to a request lives in the plan.
+Create a paginator once per listing, for example when you build a repository, and reuse it. Paginators are safe for concurrent use. Everything specific to one selection lives in the plan.
 
 The examples below list users from PostgreSQL with `database/sql`, ordered newest first:
 
@@ -87,8 +90,8 @@ users, err := offset.New[User](offset.Options{
 ### List a page
 
 ```go
-func (r *UserRepository) ListByPage(ctx context.Context, request offset.Request) (paginator.Page[User, offset.Info], error) {
-    plan, err := r.offset.Prepare(request)
+func (r *UserRepository) ListByPage(ctx context.Context, selector offset.Selector) (paginator.Page[User, offset.Info], error) {
+    plan, err := r.offset.Prepare(selector)
     if err != nil {
         return paginator.Page[User, offset.Info]{}, err
     }
@@ -111,7 +114,7 @@ func (r *UserRepository) ListByPage(ctx context.Context, request offset.Request)
 }
 ```
 
-`offset.Request{Number: 3, Size: 25}` prepares `Offset` 50 and `FetchLimit()` 26. A zero `Number` means page 1, and a zero `Size` means the policy's default. A page past the end of the data isn't an error; it comes back empty.
+`offset.Selector{Number: 3, Size: 25}` prepares `Offset` 50 and `FetchLimit()` 26. A zero `Number` means page 1, and a zero `Size` means the policy's default. A page past the end of the data isn't an error; it comes back empty.
 
 ### Navigate
 
@@ -162,17 +165,17 @@ users, err := cursor.New(cursor.Options[User, UserPosition]{
 
 ### Query by cursor
 
-`Prepare` takes a scope alongside the request. The scope names what a cursor is valid for: the resource, the filters, the caller's authorization scope, and the ordering. Your codec receives it when encoding and decoding, so a cursor from one listing can't be replayed against another.
+`Prepare` takes a scope alongside the selector. The scope names what a cursor is valid for: the resource, the filters, the caller's authorization scope, and the ordering. Your codec receives it when encoding and decoding, so a cursor from one listing can't be replayed against another.
 
 The plan tells your query where to start and which way to read:
 
 - **`cursor.Forward`** selects items strictly after `plan.Boundary`, in canonical order.
 - **`cursor.Backward`** selects items strictly before `plan.Boundary`, in **reverse** canonical order. `Finish` flips them back.
-- A nil `Boundary` (no cursor in the request) starts at the beginning for `Forward` and at the end for `Backward`.
+- A nil `Boundary` (no cursor in the selector) starts at the beginning for `Forward` and at the end for `Backward`.
 
 ```go
-func (r *UserRepository) ListByCursor(ctx context.Context, request cursor.Request) (paginator.Page[User, cursor.Info], error) {
-    plan, err := r.cursor.Prepare(request, "users:created_at_desc")
+func (r *UserRepository) ListByCursor(ctx context.Context, selector cursor.Selector) (paginator.Page[User, cursor.Info], error) {
+    plan, err := r.cursor.Prepare(selector, "users:created_at_desc")
     if err != nil {
         return paginator.Page[User, cursor.Info]{}, err
     }
@@ -210,42 +213,48 @@ If the listing has filters, apply the same filters to the query and include them
 
 ### Navigate with cursors
 
-`page.Info` holds `StartCursor` and `EndCursor`, which are the positions of the first and last items in canonical order. Both are empty when the page has no items.
+`page.Info` holds `StartCursor` and `EndCursor`, which are the positions of the first and last items in canonical order. Both are empty when the page has no items. It also echoes the selector: `Direction`, the resolved `Size`, and `Cursor`, the cursor the page was read from (empty for the first page).
 
 ```go
 // Next page, reading forward.
 if page.HasMore {
-    next := cursor.Request{Cursor: page.Info.EndCursor}
+    next := cursor.Selector{Cursor: page.Info.EndCursor}
 }
 
 // Previous page, reading backward.
-previous := cursor.Request{Direction: cursor.Backward, Cursor: page.Info.StartCursor}
+previous := cursor.Selector{Direction: cursor.Backward, Cursor: page.Info.StartCursor}
 ```
 
-`HasMore` only covers the direction the page was read in. A forward page doesn't report whether earlier items exist, and a backward page doesn't report whether later ones do.
+`HasMore` only covers the direction the page was read in. A forward page doesn't report whether earlier items exist, and a backward page doesn't report whether later ones do. A non-empty `page.Info.Cursor` means the page was read from a boundary, so items existed on its other side.
 
 ## Serving over HTTP
 
-turn doesn't parse requests or write responses, so your handler does both. Use `errors.Is` to tell a client's bad input from your own failures:
+The core packages know nothing about HTTP, and turn never writes responses: the status, headers, and body are yours. The optional `github.com/exalynt/turn/http` package provides defaults for the two parts every listing endpoint repeats: reading a selector from the URL query, and linking to adjacent pages.
+
+### Reading selectors
+
+`turnhttp.OffsetQuery` and `turnhttp.CursorQuery` parse a selector from URL query parameters. Their zero values are ready to use:
+
+| Type | Parameters |
+| --- | --- |
+| `turnhttp.OffsetQuery` | `?page=<n>`, `?size=<n>` |
+| `turnhttp.CursorQuery` | `?after=<cursor>` reads forward, `?before=<cursor>` reads backward, `?size=<n>`. An empty `?before=` reads backward from the end. |
+
+The defaults are the `turnhttp.Param` constants `ParamPage`, `ParamSize`, `ParamAfter`, and `ParamBefore`. To use other names, set them, for example `turnhttp.OffsetQuery{Page: "p", Size: "per_page"}`. Parameter names are part of your API, so changing them breaks URLs your clients already hold. If your API carries pagination some other way, such as in a request body, build the `offset.Selector` or `cursor.Selector` yourself.
+
+`Parse` only parses: it reports a value that isn't an integer, or both `after` and `before`, with the same errors as `Prepare`, which still checks the size against the policy and decodes the cursor. Use `errors.Is` to tell a client's bad input from your own failures:
 
 ```go
+var q turnhttp.OffsetQuery
+
 func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
-    var request offset.Request
-    var err error
-    if v := r.URL.Query().Get("page"); v != "" {
-        if request.Number, err = strconv.ParseInt(v, 10, 64); err != nil {
-            http.Error(w, "page must be a number", http.StatusBadRequest)
-            return
-        }
-    }
-    if v := r.URL.Query().Get("size"); v != "" {
-        if request.Size, err = strconv.Atoi(v); err != nil {
-            http.Error(w, "size must be a number", http.StatusBadRequest)
-            return
-        }
+    selector, err := q.Parse(r.URL.Query())
+    if err != nil {
+        http.Error(w, err.Error(), http.StatusBadRequest)
+        return
     }
 
-    page, err := h.users.ListByPage(r.Context(), request)
+    page, err := h.users.ListByPage(r.Context(), selector)
     switch {
     case isBadRequest(err):
         http.Error(w, err.Error(), http.StatusBadRequest)
@@ -255,6 +264,7 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
         return
     }
 
+    w.Header().Set("Link", turnhttp.FormatLinks(turnhttp.OffsetLinks(page, q.URL(r.URL))...))
     json.NewEncoder(w).Encode(map[string]any{
         "items":    page.Items,
         "page":     page.Info.Number,
@@ -272,14 +282,31 @@ func isBadRequest(err error) bool {
 }
 ```
 
+### Link headers
+
+The [`Link` header](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Link) (RFC 8288) is the standard way to point clients at adjacent pages. `turnhttp.OffsetLinks` and `turnhttp.CursorLinks` work out which pages to link to from a finished page, and call a function you supply to get each one's URL. `turnhttp.FormatLinks` turns the result into a header value:
+
+```http
+Link: </users?page=1&size=25>; rel="first", </users?page=3&size=25>; rel="next"
+```
+
+`q.URL(r.URL)` is that function for the default parameters: it sets the pagination parameters on the current request URL and keeps the rest, such as filters, so links round-trip through `Parse`. For other URL shapes, pass your own function; it receives the selector for the linked page and returns its URL. Set the header before writing the body. Relative URLs like these are valid; clients resolve them against the request URL.
+
+| Function | Links | Rules |
+| --- | --- | --- |
+| `turnhttp.OffsetLinks` | `first`, `prev`, `next` | `prev` above page 1, `next` when `HasMore`. No `last`, since turn doesn't count items. |
+| `turnhttp.CursorLinks` | `first`, `prev`, `next`, `last` | `next` reads forward from `EndCursor` and `prev` backward from `StartCursor`, each when items are known to exist that way. `first` reads forward from the start and `last` backward from the end. |
+
+Every selector your function receives carries the page's size, so following a link keeps it. Return nil to leave a link out, for example `last` if your API can't express reading backward from the end. Since the links builders return a `[]turnhttp.Link`, you can also put the links in a response body instead of a header.
+
 ### Errors
 
 | Error | Cause | Typical response |
 | --- | --- | --- |
-| `ErrInvalidSize` | Size is negative or above `MaxSize` | 400 |
-| `ErrInvalidPage` | Page number is negative | 400 |
+| `ErrInvalidSize` | Size is negative, above `MaxSize`, or not an integer | 400 |
+| `ErrInvalidPage` | Page number is negative or not an integer | 400 |
 | `ErrOffsetTooLarge` | Page is deeper than `MaxOffset` allows, or the offset overflows | 400 |
-| `ErrInvalidDirection` | Direction isn't `Forward` or `Backward` | 400 |
+| `ErrInvalidDirection` | Direction isn't `Forward` or `Backward`, or a query sets both `after` and `before` | 400 |
 | `ErrInvalidCursor` | The codec couldn't decode the cursor for this scope | 400 |
 | `ErrInvalidOptions` | The paginator's configuration is invalid | Fix at startup |
 | `ErrInvalidPlan` | `Finish` got a plan this paginator didn't prepare, or one that was changed | 500 |

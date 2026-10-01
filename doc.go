@@ -14,6 +14,8 @@
 //   - [github.com/exalynt/turn/codec]: how cursor positions become opaque
 //     cursors, with a default implementation in
 //     [github.com/exalynt/turn/codec/plain].
+//   - [github.com/exalynt/turn/http]: the optional HTTP layer, reading
+//     selectors from URL query parameters and building RFC 8288 Link headers.
 //
 // turn is in Alpha: it is still taking shape, so expect frequent breaking
 // changes. See https://readme.exalynt.com/how-it-works/stability-levels.
