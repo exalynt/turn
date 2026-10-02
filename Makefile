@@ -1,5 +1,12 @@
 .PHONY: help up down nuke logs ps fix fmt lint vet test check coverage coverage-html
 
+# Go modules in this repository: the core module and the nested adapter
+# modules, which have their own go.mod.
+MODULES := . store/mongo
+
+# Run a command in every module, stopping at the first failure.
+each = @for m in $(MODULES); do (cd $$m && $(1)) || exit 1; done
+
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
@@ -23,23 +30,23 @@ ps: ## Show the test databases and their health
 ## --- Quality ---
 
 fix: ## Apply go fix modernizations
-	go fix ./...
+	$(call each,go fix ./...)
 
 fmt: ## Format code
-	go fmt ./...
+	$(call each,go fmt ./...)
 
 lint: ## Run golangci-lint
-	golangci-lint run
+	$(call each,golangci-lint run)
 
 vet: ## Run go vet
-	go vet ./...
+	$(call each,go vet ./...)
 
 check: fix fmt vet lint ## Everything CI checks, locally
 
 ## --- Tests ---
 
 test: ## Run tests
-	go test ./...
+	$(call each,go test ./...)
 
 coverage: ## Coverage with a per-function summary
 	go test ./... -coverprofile=coverage.out

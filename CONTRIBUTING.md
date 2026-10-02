@@ -15,7 +15,22 @@ You need:
 - Go at the version in `go.mod` or newer.
 - [golangci-lint](https://golangci-lint.run/) v2.9.0, the version CI pins.
 
-There is nothing else to install to build turn or run its unit tests: turn has no dependencies outside the standard library.
+There is nothing else to install to build turn or run its unit tests. The core module has no dependencies outside the standard library; the nested adapter modules fetch their drivers through the Go toolchain.
+
+### Modules
+
+The repository holds more than one Go module:
+
+| Directory | Module | Dependencies |
+| --- | --- | --- |
+| `.` | `github.com/exalynt/turn` | Standard library only |
+| `store/mongo` | `github.com/exalynt/turn/store/mongo` | The MongoDB Go driver |
+
+Go commands only see the module of the directory they run in, so `go build ./...` at the root skips `store/mongo`. The Makefile targets run in every module; when you add a module, add it to `MODULES` in the `Makefile` and to the module matrix in `.github/workflows/ci.yml`.
+
+A nested module resolves `github.com/exalynt/turn` from this repository through a `replace` directive, so changes to the core are visible to it straight away. Consumers ignore `replace` directives, so before tagging a nested module, tag the core and change the nested module's `require` to that version. Nested modules are tagged with their directory as a prefix, such as `store/mongo/v0.2.0`.
+
+Keep each nested module's `go` directive at the core's version. If the latest driver needs a newer Go, require the newest driver release that doesn't; consumers who use a newer driver still get it, since Go selects the highest version any module requires.
 
 ### Test databases
 
@@ -46,18 +61,18 @@ Each database keeps its data on a named volume, so data survives `make down`. Wr
 Before opening a pull request, run everything CI checks:
 
 ```sh
-make check   # go fix, go fmt, go vet, golangci-lint
-make test    # go test ./...
+make check   # go fix, go fmt, go vet, golangci-lint, in every module
+make test    # go test ./..., in every module
 ```
 
-CI runs build, vet, test, gofmt, and golangci-lint on every pull request and on `main`. CI uses the Go version in `go.mod`, so code that needs a newer Go fails there even if it passes locally. Run `make help` to see every target.
+CI runs build, vet, test, gofmt, and golangci-lint in every module on every pull request and on `main`. CI uses the Go version in `go.mod`, so code that needs a newer Go fails there even if it passes locally. Run `make help` to see every target.
 
 ## Design principles
 
 Keep these in mind when proposing a change. A change that departs from them should be discussed in an issue first.
 
-- **Standard library only.** turn is meant to be imported anywhere without pulling in anything else. A new dependency needs a very strong case, beyond what the community guide's [dependency guidance](https://github.com/exalynt/community/blob/main/CONTRIBUTING.md#dependencies) already asks.
-- **Storage-agnostic.** turn hands consumers what a query needs: a limit, an offset, or the key to page after. It never builds SQL or touches a database driver. Adapters for a specific store belong in the consuming project.
+- **Standard library only in the core.** The core module is meant to be imported anywhere without pulling in anything else. A new dependency there needs a very strong case, beyond what the community guide's [dependency guidance](https://github.com/exalynt/community/blob/main/CONTRIBUTING.md#dependencies) already asks. An adapter that needs a driver goes in its own nested module, so only its importers depend on the driver.
+- **Storage-agnostic paginators, rendering-only adapters.** The paginators hand consumers what a query needs: a limit, an offset, or the key to page after. The `store` package describes a page fetch without naming any database, and adapters, such as `store/sql` and `store/mongo`, render that description into one database's syntax. Adapters never run queries or hold connections; the consumer owns the base query, execution, and scanning. An adapter for a database turn doesn't ship belongs in the consuming project, built on `turnsql.Dialect` or `store.Query`.
 - **Transport-light.** Reading pagination parameters from a URL query is in scope. Anything that's tied to a particular router or framework belongs in the consumer.
 - **Small surface.** Each exported identifier is something we have to keep supporting. Prefer one general building block over several convenience variants.
 - **Errors callers can branch on.** Report invalid input through exported sentinel errors, so a handler can map it to a 400 with `errors.Is`. Don't return ad hoc error strings for input validation.

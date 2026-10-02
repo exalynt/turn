@@ -4,7 +4,7 @@
 
 A lightweight Go library for cursor and page-based pagination.
 
-turn handles the parts of pagination every service repeats: bounding the requested page size, turning a page selection into what a query needs, and shaping the result. It never builds or runs queries, and it depends only on the standard library. Your code keeps ownership of query construction, filters, authorization, record mapping, and the response format.
+turn handles the parts of pagination every service repeats: bounding the requested page size, turning a page selection into what a query needs, and shaping the result. Optional adapters render the pagination parts of a query, such as the keyset predicate and `ORDER BY`, for PostgreSQL, MySQL, and MongoDB. turn never runs queries, and its core module depends only on the standard library. Your code keeps ownership of the base query, filters, authorization, execution, record mapping, and the response format.
 
 ## Stability
 
@@ -18,7 +18,7 @@ go get github.com/exalynt/turn
 
 turn needs Go 1.23 or newer.
 
-The `paginator` package holds what every paginator shares: `paginator.Page`, `paginator.Policy`, `paginator.Window`, and the errors. The paginators themselves live in `paginator/offset` and `paginator/cursor`, the cursor codec interface in the `codec` package, the default codec in `codec/plain`, and an optional HTTP layer for query parameters and `Link` headers in `http`:
+The `paginator` package holds what every paginator shares: `paginator.Page`, `paginator.Policy`, `paginator.Window`, and the errors. The paginators themselves live in `paginator/offset` and `paginator/cursor`, the cursor codec interface in the `codec` package, the default codec in `codec/plain`, the optional query layer in `store`, the SQL adapter in `store/sql`, and an optional HTTP layer for query parameters and `Link` headers in `http`:
 
 ```go
 import (
@@ -28,10 +28,22 @@ import (
     "github.com/exalynt/turn/paginator"
     "github.com/exalynt/turn/paginator/cursor"
     "github.com/exalynt/turn/paginator/offset"
+    turnsql "github.com/exalynt/turn/store/sql"
+    "github.com/exalynt/turn/store"
 )
 ```
 
-turn's `http` package shares its name with `net/http`, so the examples import it as `turnhttp`.
+The MongoDB adapter is a separate module, so only services that use it depend on the MongoDB driver:
+
+```sh
+go get github.com/exalynt/turn/store/mongo
+```
+
+```go
+import turnmongo "github.com/exalynt/turn/store/mongo"
+```
+
+turn's `http`, `store/sql`, and `store/mongo` packages share their names with `net/http`, `database/sql`, and the MongoDB driver's `mongo`, so the examples import them as `turnhttp`, `turnsql`, and `turnmongo`.
 
 ## How it works
 
@@ -227,6 +239,119 @@ previous := cursor.Selector{Direction: cursor.Backward, Cursor: page.Info.StartC
 
 `HasMore` only covers the direction the page was read in. A forward page doesn't report whether earlier items exist, and a backward page doesn't report whether later ones do. A non-empty `page.Info.Cursor` means the page was read from a boundary, so items existed on its other side.
 
+## Querying with adapters
+
+The examples above build the query by hand. For cursors, that means writing the keyset predicate, flipping it and the sort for `Backward`, and numbering placeholders, which is easy to get subtly wrong. The optional `store` package and its adapters do that part for you. You still write the base query, run it, and scan the rows.
+
+`store.Cursor` and `store.Offset` pair a paginator with the listing's sort order. Build them once, next to the paginators, for example when you build the repository:
+
+```go
+r.users, err = store.NewCursor(r.cursor,
+    store.Desc("created_at", func(p UserPosition) any { return p.CreatedAt }),
+    store.Desc("id", func(p UserPosition) any { return p.ID }),
+)
+
+r.usersByPage, err = store.NewOffset(r.offset,
+    store.Sort{Field: "created_at", Desc: true},
+    store.Sort{Field: "id", Desc: true},
+)
+```
+
+Each key names a field and, for cursors, how to read its value from a position. List the keys in the same order as your position describes, ending with a unique one.
+
+`List` runs the whole prepare, query, finish flow. It hands your function a `store.Query`, which says how to sort, where the keyset boundary lies, and how many items to fetch. An adapter turns that into your database's syntax.
+
+### SQL
+
+`turnsql.Render` returns a `turnsql.Clause`: the keyset predicate, `ORDER BY`, the limit clause, and their arguments. The third argument numbers the first placeholder, so the fragments can follow your own arguments. This is the cursor example from above:
+
+```go
+func (r *UserRepository) ListByCursor(ctx context.Context, selector cursor.Selector) (paginator.Page[User, cursor.Info], error) {
+    return r.users.List(ctx, selector, "users:active:created_at_desc", func(ctx context.Context, q store.Query) ([]User, error) {
+        c := turnsql.Render(turnsql.Postgres, q, 2)
+        rows, err := r.db.QueryContext(ctx,
+            "SELECT id, name, created_at FROM users WHERE status = $1"+c.And()+c.Tail(),
+            append([]any{"active"}, c.Args...)...)
+        if err != nil {
+            return nil, err
+        }
+        return scanUsers(rows)
+    })
+}
+```
+
+`c.And()` appends the predicate to your `WHERE` clause; use `c.Filter()` instead for a query without one. `c.Tail()` adds `ORDER BY` and the limit. Reading forward from a cursor, the query becomes:
+
+```sql
+SELECT id, name, created_at FROM users WHERE status = $1
+AND ((created_at, id) < ($2, $3)) ORDER BY created_at DESC, id DESC LIMIT $4
+```
+
+| Dialect | Placeholders | Keyset predicate |
+| --- | --- | --- |
+| `turnsql.Postgres` | `$1`, `$2`, … | A row comparison, `(a, b) < ($1, $2)`, when every key sorts the same direction |
+| `turnsql.MySQL` | `?` | Always one key at a time, since MySQL doesn't reliably use an index for row comparisons |
+
+With keys sorted in different directions, both compare one key at a time and bound the first key so an index still applies:
+
+```sql
+created_at <= $2 AND (created_at < $3 OR (created_at = $4 AND id > $5))
+```
+
+### MongoDB
+
+`turnmongo.Render` returns the filter, sort, limit, and skip for a `Find`. `f.And` combines the keyset filter with yours:
+
+```go
+page, err := r.users.List(ctx, selector, "users:active:created_at_desc", func(ctx context.Context, q store.Query) ([]User, error) {
+    f := turnmongo.Render(q)
+    cur, err := r.coll.Find(ctx, f.And(bson.D{{Key: "status", Value: "active"}}), f.Options())
+    if err != nil {
+        return nil, err
+    }
+    var users []User
+    if err := cur.All(ctx, &users); err != nil {
+        return nil, err
+    }
+    return users, nil
+})
+```
+
+Position values must encode to the same BSON type as the stored field. If documents hold a `bson.ObjectID`, keep a `bson.ObjectID` in the position, not its hex string.
+
+### Writing your own adapter
+
+For another SQL database, implement `turnsql.Dialect`. SQL Server, for example, uses named placeholders and `OFFSET … FETCH`:
+
+```go
+type sqlServer struct{}
+
+func (sqlServer) Placeholder(n int) string { return "@p" + strconv.Itoa(n) }
+func (sqlServer) RowValues() bool          { return false }
+func (sqlServer) Limit(limit, offset string) string {
+    if offset == "" {
+        offset = "0"
+    }
+    return "OFFSET " + offset + " ROWS FETCH NEXT " + limit + " ROWS ONLY"
+}
+```
+
+For any other store, render a `store.Query` directly. A query never carries a direction: for a backward read, `Sort` is already reversed, so your adapter always selects items strictly after `After` in `Sort` order, then sorts by `Sort` and fetches at most `Limit` items after skipping `Offset`. `q.Seek()` expands the boundary into conditions for stores that can't compare several values at once:
+
+```go
+// Sorted by created_at descending, then id ascending:
+// [[created_at < x], [created_at = x, id > y]]
+for _, conds := range q.Seek() {
+    // an item is after the boundary if it matches every cond of any one group
+}
+```
+
+### Things to know about adapters
+
+- **Fields are emitted verbatim.** That lets you use qualified names and expressions, such as `u.created_at`, but a field must never come from request input. If clients choose the sort, map their choice through an allowlist of orders you built yourself.
+- **Keyset values can't be null.** A comparison with `NULL` matches nothing, so pages would silently stop. Sort on non-null columns. A cursor whose boundary holds a null is rejected with `ErrInvalidCursor`.
+- **Use the same order everywhere.** The keys, the position type, and the scope describe one ordering. Change them together, and change the scope so old cursors are rejected.
+
 ## Serving over HTTP
 
 The core packages know nothing about HTTP, and turn never writes responses: the status, headers, and body are yours. The optional `github.com/exalynt/turn/http` package provides defaults for the two parts every listing endpoint repeats: reading a selector from the URL query, and linking to adjacent pages.
@@ -307,7 +432,7 @@ Every selector your function receives carries the page's size, so following a li
 | `ErrInvalidPage` | Page number is negative or not an integer | 400 |
 | `ErrOffsetTooLarge` | Page is deeper than `MaxOffset` allows, or the offset overflows | 400 |
 | `ErrInvalidDirection` | Direction isn't `Forward` or `Backward`, or a query sets both `after` and `before` | 400 |
-| `ErrInvalidCursor` | The codec couldn't decode the cursor for this scope | 400 |
+| `ErrInvalidCursor` | The codec couldn't decode the cursor for this scope, or a keyset value in it is null | 400 |
 | `ErrInvalidOptions` | The paginator's configuration is invalid | Fix at startup |
 | `ErrInvalidPlan` | `Finish` got a plan this paginator didn't prepare, or one that was changed | 500 |
 | `ErrInvalidBatch` | The query returned more than `FetchLimit()` items | 500 |
