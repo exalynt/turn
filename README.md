@@ -1,4 +1,4 @@
-# turn
+# Turn
 
 [![Stability: Alpha](https://img.shields.io/badge/stability-alpha-f97316)](https://readme.exalynt.com/how-it-works/stability-levels)
 
@@ -14,7 +14,46 @@ The core depends only on the standard library. Two optional layers sit on top, a
 > [!WARNING]
 > turn is in **Alpha**, one of Exalynt's [stability levels](https://readme.exalynt.com/how-it-works/stability-levels). It works, but it is still taking shape. Expect frequent breaking changes, sometimes without notice, and expect bugs. Build on it only to experiment, and expect its interfaces to change.
 
-**Contents:** [Install](#install) · [Quick start](#quick-start) · [The core model](#the-core-model) · [Numbered pages](#numbered-pages) · [Cursors](#cursors) · [Errors](#errors) · [Things to get right](#things-to-get-right) · [Optional: query adapters](#optional-query-adapters) · [Optional: HTTP](#optional-http) · [Package layout](#package-layout)
+**Contents:** [Why turn](#why-turn) · [Install](#install) · [Quick start](#quick-start) · [The core model](#the-core-model) · [Numbered pages](#numbered-pages) · [Cursors](#cursors) · [Errors](#errors) · [Things to get right](#things-to-get-right) · [Optional: query adapters](#optional-query-adapters) · [Optional: HTTP](#optional-http) · [Package layout](#package-layout)
+
+## Why turn
+
+turn is unopinionated by design. It isn't tied to a web framework, an ORM, a database, or an API style, and it doesn't decide how your queries run or how clients see pagination. It handles the repetitive parts of pagination itself and leaves those decisions to you.
+
+Most Go pagination libraries make some of those decisions for you: they run the query, count rows, build the whole SQL statement, or shape the response for one API style. Here is what is available as of October 2026:
+
+| Library                                                                           | Strategies         | What it takes over                                                   |
+| --------------------------------------------------------------------------------- | ------------------ | -------------------------------------------------------------------- |
+| [pilagod/gorm-cursor-paginator](https://github.com/pilagod/gorm-cursor-paginator) | Cursor             | Runs the query through GORM                                          |
+| [theplant/relay](https://github.com/theplant/relay)                               | Cursor and offset  | Runs the query and an optional total count through GORM adapters     |
+| [nrfta/paging-go](https://github.com/nrfta/paging-go)                             | Cursor and offset  | Runs the query and builds GraphQL Relay connections for gqlgen       |
+| [booscaaa/go-paginate](https://github.com/booscaaa/go-paginate)                   | Cursor and offset  | Builds the whole PostgreSQL query, including filters                 |
+| [ulule/paging](https://github.com/ulule/paging)                                   | Cursor and offset  | Runs the query through its store; offset pages count the total       |
+| [morkid/paginate](https://github.com/morkid/paginate)                             | Offset             | Runs the query and a `COUNT` through GORM, with filters from the URL |
+| [rvflash/cursor](https://github.com/rvflash/cursor)                               | Cursor             | Renders the pagination clauses, for MySQL and MariaDB only           |
+| [knadh/paginator](https://github.com/knadh/paginator)                             | Offset             | Nothing, but needs a total count from you                            |
+| [pigfox/paginate](https://github.com/pigfox/paginate)                             | Offset, ID cursors | Nothing, but offset pages need a total count from you                |
+
+Where those libraries decide for you, turn leaves you in control:
+
+- **You execute the query.** turn works with `database/sql`, pgx, sqlc, any ORM, the MongoDB driver, or another service's API. The optional [query adapters](#optional-query-adapters) render only the pagination fragments, never the base query, filters, or authorization.
+- **You decide how pagination is surfaced.** turn doesn't depend on a web framework or an API style. Pages are plain values you can put in a JSON body or `Link` headers, map onto a GraphQL connection or a gRPC message, or print from a CLI. The optional [`http`](#optional-http) layer only parses URL query parameters and builds links; it never writes responses.
+
+Meanwhile turn handles the parts every listing repeats, and gets them right:
+
+- **Both strategies, one model.** Numbered pages and cursors share the same plan, fetch, page flow, size policy, and errors, so a listing can switch strategies without rewriting its handlers.
+- **No `COUNT` query.** One lookahead item tells turn whether another page exists, for both strategies.
+- **Cursors are bound to their listing.** Every cursor plan takes a scope naming the resource, filters, caller, and ordering, and the codec rejects a cursor issued for another one. Replaying a cursor against a different listing is an error, not a wrong page.
+- **Bad input is an error, not a guess.** An oversized page size is rejected rather than clamped, and a malformed cursor is rejected rather than silently restarting from the first page. `paginator.IsSelectorError` separates bad input from bugs, so an API can answer 400 or 500 correctly.
+- **Keyset queries that keep their index.** The SQL adapter handles backward reads, mixed sort directions, and MySQL's poor index use for row comparisons, and rejects null keyset values instead of silently ending the listing.
+- **Few dependencies.** The core and the SQL and HTTP layers use only the standard library. The MongoDB adapter is a separate module.
+
+### When to use something else
+
+- **You want the library to run the query.** On GORM, pilagod/gorm-cursor-paginator or theplant/relay do that.
+- **You serve GraphQL Relay connections with gqlgen.** nrfta/paging-go builds them for you.
+- **You need a total, such as "page 3 of 12" or a link to the last numbered page.** turn never counts. knadh/paginator and pigfox/paginate compute those from a total you supply.
+- **You want filters and sorting from the URL turned into SQL.** booscaaa/go-paginate and morkid/paginate do that. turn deliberately leaves filtering to you.
 
 ## Install
 
@@ -97,14 +136,14 @@ Cursor pagination follows the same three steps. See [Cursors](#cursors).
 
 Every listing uses the same four pieces. The selector, plan, and page differ between the two strategies:
 
-| Piece | What it is | Numbered pages | Cursors |
-| --- | --- | --- | --- |
-| **Paginator** | Built once per listing. Holds the size policy and, for cursors, how to encode positions. | `offset.Paginator[T]` | `cursor.Paginator[T, P]` |
-| **Selector** | Which page the client asked for. The zero value means the first page at the default size. | `offset.Selector{Number, Size}` | `cursor.Selector{Direction, Size, Cursor}` |
-| **Plan** | What your query needs to fetch that page. | `offset.Plan`: `Offset`, `Limit()` | `cursor.Plan[P]`: `Direction`, `Boundary`, `Limit()` |
-| **Page** | The result: the items plus what a client needs to navigate. | `offset.Page[T]`: `Number`, `Size` | `cursor.Page[T]`: `Direction`, `Size`, `Cursor`, `StartCursor`, `EndCursor` |
+| Piece         | What it is                                                                                | Numbered pages                     | Cursors                                                                     |
+| ------------- | ----------------------------------------------------------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------- |
+| **Paginator** | Built once per listing. Holds the size policy and, for cursors, how to encode positions.  | `offset.Paginator[T]`              | `cursor.Paginator[T, P]`                                                    |
+| **Selector**  | Which page the client asked for. The zero value means the first page at the default size. | `offset.Selector{Number, Size}`    | `cursor.Selector{Direction, Size, Cursor}`                                  |
+| **Plan**      | What your query needs to fetch that page.                                                 | `offset.Plan`: `Offset`, `Limit()` | `cursor.Plan[P]`: `Direction`, `Boundary`, `Limit()`                        |
+| **Page**      | The result: the items plus what a client needs to navigate.                               | `offset.Page[T]`: `Number`, `Size` | `cursor.Page[T]`: `Direction`, `Size`, `Cursor`, `StartCursor`, `EndCursor` |
 
-`T` is your item type. `P` is a cursor *position*, the values that locate one item in the listing's order (see [Define a position](#define-a-position)).
+`T` is your item type. `P` is a cursor _position_, the values that locate one item in the listing's order (see [Define a position](#define-a-position)).
 
 ### Plan, fetch, page
 
@@ -133,12 +172,12 @@ A zero `Size` in a selector means `DefaultSize`. A size above `MaxSize` is rejec
 
 ### Choosing a strategy
 
-| | Numbered pages | Cursors |
-| --- | --- | --- |
-| Client can jump to page *N* | Yes | No, only next and previous |
-| Stable while data changes | No: inserts and deletes shift pages | Yes, unless an item's sort values change |
-| Cost of deep pages | Grows with depth, since the database reads every skipped row | Constant with a suitable index |
-| What you provide | A sort order | A sort order, a position type, a codec, and a scope |
+|                             | Numbered pages                                               | Cursors                                             |
+| --------------------------- | ------------------------------------------------------------ | --------------------------------------------------- |
+| Client can jump to page _N_ | Yes                                                          | No, only next and previous                          |
+| Stable while data changes   | No: inserts and deletes shift pages                          | Yes, unless an item's sort values change            |
+| Cost of deep pages          | Grows with depth, since the database reads every skipped row | Constant with a suitable index                      |
+| What you provide            | A sort order                                                 | A sort order, a position type, a codec, and a scope |
 
 Use numbered pages for small or bounded listings, and when a UI needs page numbers. Use cursors for large, growing, or infinite-scroll listings and for APIs.
 
@@ -294,16 +333,16 @@ previous := cursor.Selector{Direction: cursor.Backward, Cursor: page.StartCursor
 
 Every error turn returns wraps one of these sentinels from the `paginator` package, so check them with `errors.Is`. They fall into two groups. Selector errors mean the page selection you were given is invalid, whether it came from an HTTP request, command-line flags, or anywhere else. Usage errors mean a bug in the calling code.
 
-| Error | Group | Cause |
-| --- | --- | --- |
-| `ErrInvalidSize` | Selector | Size is negative or above `MaxSize` (or, from `http`, not an integer) |
-| `ErrInvalidPage` | Selector | Page number is negative (or, from `http`, not an integer) |
-| `ErrOffsetTooLarge` | Selector | Page is deeper than `MaxOffset` allows, or the offset overflows |
-| `ErrInvalidDirection` | Selector | Direction isn't `Forward` or `Backward` (or, from `http`, both `after` and `before` are set) |
-| `ErrInvalidCursor` | Selector | The codec couldn't decode the cursor for this scope, or (from `store`) a keyset value in it is null |
-| `ErrInvalidOptions` | Usage | A paginator's or `store` wrapper's configuration is invalid; fix it at startup |
-| `ErrInvalidPlan` | Usage | `Page` got a plan this paginator didn't produce, or one that was changed |
-| `ErrInvalidBatch` | Usage | The query returned more than `Limit()` items |
+| Error                 | Group    | Cause                                                                                               |
+| --------------------- | -------- | --------------------------------------------------------------------------------------------------- |
+| `ErrInvalidSize`      | Selector | Size is negative or above `MaxSize` (or, from `http`, not an integer)                               |
+| `ErrInvalidPage`      | Selector | Page number is negative (or, from `http`, not an integer)                                           |
+| `ErrOffsetTooLarge`   | Selector | Page is deeper than `MaxOffset` allows, or the offset overflows                                     |
+| `ErrInvalidDirection` | Selector | Direction isn't `Forward` or `Backward` (or, from `http`, both `after` and `before` are set)        |
+| `ErrInvalidCursor`    | Selector | The codec couldn't decode the cursor for this scope, or (from `store`) a keyset value in it is null |
+| `ErrInvalidOptions`   | Usage    | A paginator's or `store` wrapper's configuration is invalid; fix it at startup                      |
+| `ErrInvalidPlan`      | Usage    | `Page` got a plan this paginator didn't produce, or one that was changed                            |
+| `ErrInvalidBatch`     | Usage    | The query returned more than `Limit()` items                                                        |
 
 `Page` on a cursor paginator can also return an error from your codec's `Encode`.
 
@@ -383,10 +422,10 @@ SELECT id, name, created_at FROM users WHERE status = $1
 AND ((created_at, id) < ($2, $3)) ORDER BY created_at DESC, id DESC LIMIT $4
 ```
 
-| Dialect | Placeholders | Keyset predicate |
-| --- | --- | --- |
-| `turnsql.Postgres` | `$1`, `$2`, … | A row comparison, `(a, b) < ($1, $2)`, when every key sorts the same direction |
-| `turnsql.MySQL` | `?` | Always one key at a time, since MySQL doesn't reliably use an index for row comparisons |
+| Dialect            | Placeholders  | Keyset predicate                                                                        |
+| ------------------ | ------------- | --------------------------------------------------------------------------------------- |
+| `turnsql.Postgres` | `$1`, `$2`, … | A row comparison, `(a, b) < ($1, $2)`, when every key sorts the same direction          |
+| `turnsql.MySQL`    | `?`           | Always one key at a time, since MySQL doesn't reliably use an index for row comparisons |
 
 With keys sorted in different directions, both compare one key at a time and bound the first key so an index still applies:
 
@@ -470,9 +509,9 @@ The core knows nothing about HTTP, and turn never writes responses: the status, 
 
 `turnhttp.OffsetQuery` and `turnhttp.CursorQuery` parse a selector from URL query parameters. Their zero values are ready to use:
 
-| Type | Parameters |
-| --- | --- |
-| `turnhttp.OffsetQuery` | `?page=<n>`, `?size=<n>` |
+| Type                   | Parameters                                                                                                                        |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `turnhttp.OffsetQuery` | `?page=<n>`, `?size=<n>`                                                                                                          |
 | `turnhttp.CursorQuery` | `?after=<cursor>` reads forward, `?before=<cursor>` reads backward, `?size=<n>`. An empty `?before=` reads backward from the end. |
 
 To use other names, set the fields, for example `turnhttp.OffsetQuery{Page: "p", Size: "per_page"}`. The defaults are the constants `ParamPage`, `ParamSize`, `ParamAfter`, and `ParamBefore`. Parameter names are part of your API, so changing them breaks URLs your clients already hold. If your API carries pagination some other way, such as in a request body, build the `offset.Selector` or `cursor.Selector` yourself.
@@ -519,26 +558,26 @@ Link: </users?page=1&size=25>; rel="first", </users?page=3&size=25>; rel="next"
 
 `q.URL(r.URL)` is that function for the default parameters. It sets the pagination parameters on the current request URL and keeps the rest, such as filters, so links round-trip through `Parse`. For other URL shapes, pass your own function; it receives the selector for the linked page and returns its URL. Set the header before writing the body. Relative URLs like these are valid; clients resolve them against the request URL.
 
-| Function | Links | Rules |
-| --- | --- | --- |
-| `turnhttp.OffsetLinks` | `first`, `prev`, `next` | `prev` above page 1, `next` when `HasMore`. No `last`, since turn doesn't count items. |
+| Function               | Links                           | Rules                                                                                                                                                                                             |
+| ---------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `turnhttp.OffsetLinks` | `first`, `prev`, `next`         | `prev` above page 1, `next` when `HasMore`. No `last`, since turn doesn't count items.                                                                                                            |
 | `turnhttp.CursorLinks` | `first`, `prev`, `next`, `last` | `next` reads forward from `EndCursor` and `prev` backward from `StartCursor`, each when items are known to exist that way. `first` reads forward from the start and `last` backward from the end. |
 
 Every selector your function receives carries the page's size, so following a link keeps it. Return nil to leave a link out, for example `last` if your API can't express reading backward from the end. The link builders return a `[]turnhttp.Link`, so you can put the links in a response body instead of a header.
 
 ## Package layout
 
-| Package | Import as | Holds | Needed? |
-| --- | --- | --- | --- |
-| `github.com/exalynt/turn/paginator` | `paginator` | `Policy`, `Window`, and the errors | Always |
-| `github.com/exalynt/turn/paginator/offset` | `offset` | The numbered-page paginator and its `Page` | For numbered pages |
-| `github.com/exalynt/turn/paginator/cursor` | `cursor` | The cursor paginator and its `Page` | For cursors |
-| `github.com/exalynt/turn/codec` | `codec` | The `Codec` interface and `Cursor` type | For cursors |
-| `github.com/exalynt/turn/codec/plain` | `plain` | The default, unsigned codec | Optional |
-| `github.com/exalynt/turn/store` | `store` | The store-independent query description | Optional |
-| `github.com/exalynt/turn/store/sql` | `turnsql` | The SQL adapter | Optional |
-| `github.com/exalynt/turn/store/mongo` | `turnmongo` | The MongoDB adapter, in its own module | Optional |
-| `github.com/exalynt/turn/http` | `turnhttp` | URL query parsing and `Link` headers | Optional |
+| Package                                    | Import as   | Holds                                      | Needed?            |
+| ------------------------------------------ | ----------- | ------------------------------------------ | ------------------ |
+| `github.com/exalynt/turn/paginator`        | `paginator` | `Policy`, `Window`, and the errors         | Always             |
+| `github.com/exalynt/turn/paginator/offset` | `offset`    | The numbered-page paginator and its `Page` | For numbered pages |
+| `github.com/exalynt/turn/paginator/cursor` | `cursor`    | The cursor paginator and its `Page`        | For cursors        |
+| `github.com/exalynt/turn/codec`            | `codec`     | The `Codec` interface and `Cursor` type    | For cursors        |
+| `github.com/exalynt/turn/codec/plain`      | `plain`     | The default, unsigned codec                | Optional           |
+| `github.com/exalynt/turn/store`            | `store`     | The store-independent query description    | Optional           |
+| `github.com/exalynt/turn/store/sql`        | `turnsql`   | The SQL adapter                            | Optional           |
+| `github.com/exalynt/turn/store/mongo`      | `turnmongo` | The MongoDB adapter, in its own module     | Optional           |
+| `github.com/exalynt/turn/http`             | `turnhttp`  | URL query parsing and `Link` headers       | Optional           |
 
 `http`, `store/sql`, and `store/mongo` share their names with `net/http`, `database/sql`, and the MongoDB driver's `mongo`, so the examples import them as `turnhttp`, `turnsql`, and `turnmongo`. Every package except `store/mongo` is in the core module and depends only on the standard library.
 
