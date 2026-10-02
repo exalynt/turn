@@ -80,7 +80,7 @@ func NewCursor[T, P any](p *cursor.Paginator[T, P], keys ...Key[P]) (*Cursor[T, 
 // in the plan's boundary is nil.
 func (c *Cursor[T, P]) Query(plan cursor.Plan[P]) (Query, error) {
 	backward := plan.Direction == cursor.Backward
-	q := Query{Sort: make([]Sort, len(c.keys)), Limit: plan.FetchLimit()}
+	q := Query{Sort: make([]Sort, len(c.keys)), Limit: plan.Limit()}
 	for i, k := range c.keys {
 		q.Sort[i] = Sort{Field: k.Field, Desc: k.Desc != backward}
 	}
@@ -142,7 +142,7 @@ func NewOffset[T any](p *offset.Paginator[T], order ...Sort) (*Offset[T], error)
 // Query returns the query for plan, which must come from the paginator's
 // Prepare.
 func (o *Offset[T]) Query(plan offset.Plan) Query {
-	return Query{Sort: slices.Clone(o.order), Limit: plan.FetchLimit(), Offset: plan.Offset}
+	return Query{Sort: slices.Clone(o.order), Limit: plan.Limit(), Offset: plan.Offset}
 }
 
 // List prepares selector, fetches the page's items with fetch, and finishes

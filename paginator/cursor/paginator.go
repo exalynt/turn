@@ -50,8 +50,7 @@ type Selector struct {
 // For a Forward plan, the consumer selects items strictly after Boundary in
 // canonical order; for a Backward plan, items strictly before Boundary in
 // reverse canonical order. A nil Boundary selects from the start or end of the
-// listing respectively. Either way the consumer fetches at most FetchLimit
-// items.
+// listing respectively. Either way the consumer fetches at most Limit items.
 //
 // Create plans with [Paginator.Prepare] and pass them to Finish
 // unchanged; a plan carries the scope and cursor it was prepared for.
@@ -179,7 +178,7 @@ func (p *Paginator[T, P]) Prepare(selector Selector, scope string) (Plan[P], err
 //
 // It returns an error wrapping [paginator.ErrInvalidPlan] if this paginator
 // could not have prepared plan, [paginator.ErrInvalidBatch] if items holds more
-// than plan.FetchLimit() items, and the codec's error if encoding a cursor
+// than plan.Limit() items, and the codec's error if encoding a cursor
 // fails.
 func (p *Paginator[T, P]) Finish(plan Plan[P], items []T) (Page[T], error) {
 	if !paging.Allows(p.policy, plan.Window) || !plan.Direction.valid() {

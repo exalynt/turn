@@ -22,7 +22,7 @@ type Selector struct {
 }
 
 // Plan is a prepared numbered-page query. The consumer skips Offset
-// items of its canonically ordered query and fetches at most FetchLimit items.
+// items of its canonically ordered query and fetches at most Limit items.
 //
 // Create plans with [Paginator.Prepare] and pass them to Finish
 // unchanged.
@@ -126,7 +126,7 @@ func (p *Paginator[T]) Prepare(selector Selector) (Plan, error) {
 //
 // It returns an error wrapping [paginator.ErrInvalidPlan] if this paginator
 // could not have prepared plan, and [paginator.ErrInvalidBatch] if items holds
-// more than plan.FetchLimit() items.
+// more than plan.Limit() items.
 func (p *Paginator[T]) Finish(plan Plan, items []T) (Page[T], error) {
 	if err := p.check(plan); err != nil {
 		return Page[T]{}, err

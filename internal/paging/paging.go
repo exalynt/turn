@@ -56,8 +56,8 @@ func Allows(p paginator.Policy, w paginator.Window) bool {
 // Trim removes the lookahead item from a fetched batch and reports whether
 // it was present.
 func Trim[T any](w paginator.Window, items []T) ([]T, bool, error) {
-	if len(items) > w.FetchLimit() {
-		return nil, false, fmt.Errorf("%w: got %d items, more than the fetch limit of %d", paginator.ErrInvalidBatch, len(items), w.FetchLimit())
+	if len(items) > w.Limit() {
+		return nil, false, fmt.Errorf("%w: got %d items, more than the limit of %d", paginator.ErrInvalidBatch, len(items), w.Limit())
 	}
 	if items == nil {
 		return []T{}, false, nil

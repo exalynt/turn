@@ -3,5 +3,5 @@
 // returns a [Page].
 //
 // [Paginator.Prepare] turns a [Selector] into a [Plan] whose Offset and
-// FetchLimit the consumer applies to its canonically ordered query.
+// Limit the consumer applies to its canonically ordered query.
 package offset

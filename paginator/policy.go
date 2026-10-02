@@ -22,9 +22,9 @@ type Window struct {
 	Size int
 }
 
-// FetchLimit returns how many items the consumer's query should fetch: Size
-// plus one lookahead item, which tells Finish whether more items exist without
-// a count query.
-func (w Window) FetchLimit() int {
+// Limit returns how many items the consumer's query should fetch: Size plus
+// one lookahead item, which tells Finish whether more items exist without a
+// count query.
+func (w Window) Limit() int {
 	return w.Size + 1
 }

@@ -64,7 +64,7 @@ func (r *UserRepository) List(ctx context.Context, selector offset.Selector) (of
         SELECT id, name, created_at FROM users
         ORDER BY created_at DESC, id DESC
         LIMIT $1 OFFSET $2`,
-        plan.FetchLimit(), plan.Offset)
+        plan.Limit(), plan.Offset)
     if err != nil {
         return offset.Page[User]{}, err
     }
@@ -101,7 +101,7 @@ Every listing uses the same four pieces. The selector, plan, and page differ bet
 | --- | --- | --- | --- |
 | **Paginator** | Built once per listing. Holds the size policy and, for cursors, how to encode positions. | `offset.Paginator[T]` | `cursor.Paginator[T, P]` |
 | **Selector** | Which page the client asked for. The zero value means the first page at the default size. | `offset.Selector{Number, Size}` | `cursor.Selector{Direction, Size, Cursor}` |
-| **Plan** | What your query needs to fetch that page. | `offset.Plan`: `Offset`, `FetchLimit()` | `cursor.Plan[P]`: `Direction`, `Boundary`, `FetchLimit()` |
+| **Plan** | What your query needs to fetch that page. | `offset.Plan`: `Offset`, `Limit()` | `cursor.Plan[P]`: `Direction`, `Boundary`, `Limit()` |
 | **Page** | The result: the items plus what a client needs to navigate. | `offset.Page[T]`: `Number`, `Size` | `cursor.Page[T]`: `Direction`, `Size`, `Cursor`, `StartCursor`, `EndCursor` |
 
 `T` is your item type. `P` is a cursor *position*, the values that locate one item in the listing's order (see [Define a position](#define-a-position)).
@@ -109,10 +109,10 @@ Every listing uses the same four pieces. The selector, plan, and page differ bet
 ### Prepare, query, finish
 
 1. **Prepare** a plan from a selector. This validates the selector against the size policy and works out what the query needs.
-2. **Query** your own store using the plan, fetching at most `plan.FetchLimit()` items.
+2. **Query** your own store using the plan, fetching at most `plan.Limit()` items.
 3. **Finish** the plan with the fetched items to get a page.
 
-`FetchLimit()` is the page size plus one. That extra lookahead item tells `Finish` whether more items exist, so neither strategy needs a `COUNT` query. `Finish` removes it before returning the page. Both page types hold the same two fields first, followed by what that strategy needs to navigate:
+`Limit()` is the page size plus one. That extra lookahead item tells `Finish` whether more items exist, so neither strategy needs a `COUNT` query. `Finish` removes it before returning the page. Both page types hold the same two fields first, followed by what that strategy needs to navigate:
 
 ```go
 Items   []T  // at most Size items, in canonical order; never nil
@@ -165,7 +165,7 @@ A page deeper than `MaxOffset` is rejected with `ErrOffsetTooLarge`.
 
 ### Query
 
-The plan's `Offset` and `FetchLimit()` map directly onto `OFFSET` and `LIMIT`, as in the [quick start](#quick-start). `offset.Selector{Number: 3, Size: 25}` prepares `Offset` 50 and `FetchLimit()` 26. A zero `Number` means page 1. A page past the end of the data isn't an error; it comes back empty.
+The plan's `Offset` and `Limit()` map directly onto `OFFSET` and `LIMIT`, as in the [quick start](#quick-start). `offset.Selector{Number: 3, Size: 25}` prepares `Offset` 50 and `Limit()` 26. A zero `Number` means page 1. A page past the end of the data isn't an error; it comes back empty.
 
 ### Navigate
 
@@ -255,7 +255,7 @@ func (r *UserRepository) ListByCursor(ctx context.Context, selector cursor.Selec
         args = append(args, b.CreatedAt, b.ID)
     }
     query += fmt.Sprintf(" ORDER BY created_at %s, id %s LIMIT $%d", order, order, len(args)+1)
-    args = append(args, plan.FetchLimit())
+    args = append(args, plan.Limit())
 
     rows, err := r.db.QueryContext(ctx, query, args...)
     if err != nil {
@@ -303,7 +303,7 @@ Every error turn returns wraps one of these sentinels from the `paginator` packa
 | `ErrInvalidCursor` | Selector | The codec couldn't decode the cursor for this scope, or (from `store`) a keyset value in it is null |
 | `ErrInvalidOptions` | Usage | A paginator's or `store` wrapper's configuration is invalid; fix it at startup |
 | `ErrInvalidPlan` | Usage | `Finish` got a plan this paginator didn't prepare, or one that was changed |
-| `ErrInvalidBatch` | Usage | The query returned more than `FetchLimit()` items |
+| `ErrInvalidBatch` | Usage | The query returned more than `Limit()` items |
 
 `Finish` on a cursor paginator can also return an error from your codec's `Encode`.
 
@@ -322,7 +322,7 @@ case err != nil:
 ## Things to get right
 
 - **Use a deterministic order** that ends with a unique column, such as `id`. Without one, items with equal sort values can repeat or go missing between pages.
-- **Return the whole query result to `Finish`.** Fewer than `FetchLimit()` items tells turn the listing is exhausted. If the query fails, return its error rather than finishing a partial batch.
+- **Return the whole query result to `Finish`.** Fewer than `Limit()` items tells turn the listing is exhausted. If the query fails, return its error rather than finishing a partial batch.
 - **Don't change plans.** Pass the plan from `Prepare` to `Finish` as it is. `Finish` rejects plans it couldn't have produced.
 - **Neither strategy is a snapshot.** Inserts and deletes between requests shift numbered pages, and updates to sort columns can move items across cursor boundaries. Transactions and snapshots are up to you.
 - **Deep offsets are slow.** The database still reads every skipped row. Set `MaxOffset`, or use cursors for large or unbounded listings.

@@ -62,6 +62,6 @@ var (
 	ErrInvalidPlan = errors.New("turn: invalid plan")
 
 	// ErrInvalidBatch reports a fetched batch with more items than the plan's
-	// FetchLimit.
+	// Limit.
 	ErrInvalidBatch = errors.New("turn: invalid batch")
 )

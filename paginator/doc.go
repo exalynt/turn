@@ -10,14 +10,14 @@
 //
 //	plan, err := p.Prepare(selector)
 //	// handle err
-//	rows, err := fetch(ctx, plan) // at most plan.FetchLimit() rows
+//	rows, err := fetch(ctx, plan) // at most plan.Limit() rows
 //	// handle err
 //	page, err := p.Finish(plan, rows)
 //
 // Each plan asks for one item more than the page size. Finish drops that
 // lookahead item and reports its presence as the page's HasMore, so no
 // paginator needs a count query. Finish expects the complete result of the
-// query: fewer than FetchLimit items means the query was exhausted, so a failed
+// query: fewer than Limit items means the query was exhausted, so a failed
 // or partial fetch must be handled before calling it. Plans must reach Finish
 // unchanged; Finish rejects plans its paginator could not have prepared.
 //
