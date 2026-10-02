@@ -1,6 +1,6 @@
 // Package cursor serves keyset pagination. It follows the prepare, query,
 // finish flow described in [github.com/exalynt/turn/paginator] and returns a
-// [paginator.Page].
+// [Page].
 //
 // The consumer defines a position type holding the ordered values that
 // identify an item, such as a creation time and ID, and supplies a

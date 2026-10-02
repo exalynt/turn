@@ -96,21 +96,20 @@ func (q CursorQuery) params() (after, before, size string) {
 // Every selector it receives has the page's Size. A nil URL leaves that link
 // out, for example a last link when the API cannot express reading backward
 // from the end.
-func CursorLinks[T any](page paginator.Page[T, cursor.Info], url func(cursor.Selector) *url.URL) []Link {
-	info := page.Info
+func CursorLinks[T any](page cursor.Page[T], url func(cursor.Selector) *url.URL) []Link {
 	at := func(rel string, direction cursor.Direction, from codec.Cursor) Link {
-		return Link{Rel: rel, URL: url(cursor.Selector{Direction: direction, Size: info.Size, Cursor: from})}
+		return Link{Rel: rel, URL: url(cursor.Selector{Direction: direction, Size: page.Size, Cursor: from})}
 	}
-	hasPrev, hasNext := info.Cursor != "", page.HasMore
-	if info.Direction == cursor.Backward {
-		hasPrev, hasNext = page.HasMore, info.Cursor != ""
+	hasPrev, hasNext := page.Cursor != "", page.HasMore
+	if page.Direction == cursor.Backward {
+		hasPrev, hasNext = page.HasMore, page.Cursor != ""
 	}
 	links := []Link{at(RelFirst, cursor.Forward, "")}
-	if hasPrev && info.StartCursor != "" {
-		links = append(links, at(RelPrev, cursor.Backward, info.StartCursor))
+	if hasPrev && page.StartCursor != "" {
+		links = append(links, at(RelPrev, cursor.Backward, page.StartCursor))
 	}
-	if hasNext && info.EndCursor != "" {
-		links = append(links, at(RelNext, cursor.Forward, info.EndCursor))
+	if hasNext && page.EndCursor != "" {
+		links = append(links, at(RelNext, cursor.Forward, page.EndCursor))
 	}
 	return append(links, at(RelLast, cursor.Backward, ""))
 }

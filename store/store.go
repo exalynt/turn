@@ -100,18 +100,18 @@ func (c *Cursor[T, P]) Query(plan cursor.Plan[P]) (Query, error) {
 // List prepares selector in scope, fetches the page's items with fetch, and
 // finishes the page. It returns the errors of the paginator's Prepare and
 // Finish, the error of [Cursor.Query], and fetch's error unchanged.
-func (c *Cursor[T, P]) List(ctx context.Context, selector cursor.Selector, scope string, fetch Fetch[T]) (paginator.Page[T, cursor.Info], error) {
+func (c *Cursor[T, P]) List(ctx context.Context, selector cursor.Selector, scope string, fetch Fetch[T]) (cursor.Page[T], error) {
 	plan, err := c.paginator.Prepare(selector, scope)
 	if err != nil {
-		return paginator.Page[T, cursor.Info]{}, err
+		return cursor.Page[T]{}, err
 	}
 	q, err := c.Query(plan)
 	if err != nil {
-		return paginator.Page[T, cursor.Info]{}, err
+		return cursor.Page[T]{}, err
 	}
 	items, err := fetch(ctx, q)
 	if err != nil {
-		return paginator.Page[T, cursor.Info]{}, err
+		return cursor.Page[T]{}, err
 	}
 	return c.paginator.Finish(plan, items)
 }
@@ -148,14 +148,14 @@ func (o *Offset[T]) Query(plan offset.Plan) Query {
 // List prepares selector, fetches the page's items with fetch, and finishes
 // the page. It returns the errors of the paginator's Prepare and Finish, and
 // fetch's error unchanged.
-func (o *Offset[T]) List(ctx context.Context, selector offset.Selector, fetch Fetch[T]) (paginator.Page[T, offset.Info], error) {
+func (o *Offset[T]) List(ctx context.Context, selector offset.Selector, fetch Fetch[T]) (offset.Page[T], error) {
 	plan, err := o.paginator.Prepare(selector)
 	if err != nil {
-		return paginator.Page[T, offset.Info]{}, err
+		return offset.Page[T]{}, err
 	}
 	items, err := fetch(ctx, o.Query(plan))
 	if err != nil {
-		return paginator.Page[T, offset.Info]{}, err
+		return offset.Page[T]{}, err
 	}
 	return o.paginator.Finish(plan, items)
 }

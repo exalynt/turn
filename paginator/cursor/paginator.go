@@ -68,15 +68,23 @@ type Plan[P any] struct {
 	cursor codec.Cursor
 }
 
-// Info describes a cursor page.
+// Page is one cursor page of items of type T.
 //
-// To continue reading forward, select EndCursor with Forward while
-// [paginator.Page.HasMore] is true on a Forward page; to continue backward,
-// select StartCursor with Backward while HasMore is true on a Backward page.
-// Whether items exist in the opposite direction is not reported, but a
-// non-empty Cursor means the page was read from a boundary, so items existed
-// on its other side when the cursor was issued.
-type Info struct {
+// To continue reading forward, select EndCursor with Forward while HasMore is
+// true on a Forward page; to continue backward, select StartCursor with
+// Backward while HasMore is true on a Backward page. Whether items exist in
+// the opposite direction is not reported, but a non-empty Cursor means the
+// page was read from a boundary, so items existed on its other side when the
+// cursor was issued.
+type Page[T any] struct {
+	// Items holds at most Size items, in canonical order. It is never nil,
+	// and appending to it never overwrites the fetched batch.
+	Items []T
+
+	// HasMore reports whether the query found an item beyond this page in
+	// the direction it was read.
+	HasMore bool
+
 	// Direction is the direction the page was read in.
 	Direction Direction
 
@@ -173,28 +181,28 @@ func (p *Paginator[T, P]) Prepare(selector Selector, scope string) (Plan[P], err
 // could not have prepared plan, [paginator.ErrInvalidBatch] if items holds more
 // than plan.FetchLimit() items, and the codec's error if encoding a cursor
 // fails.
-func (p *Paginator[T, P]) Finish(plan Plan[P], items []T) (paginator.Page[T, Info], error) {
+func (p *Paginator[T, P]) Finish(plan Plan[P], items []T) (Page[T], error) {
 	if !paging.Allows(p.policy, plan.Window) || !plan.Direction.valid() {
-		return paginator.Page[T, Info]{}, fmt.Errorf("%w: direction %d at size %d", paginator.ErrInvalidPlan, plan.Direction, plan.Size)
+		return Page[T]{}, fmt.Errorf("%w: direction %d at size %d", paginator.ErrInvalidPlan, plan.Direction, plan.Size)
 	}
 	kept, more, err := paging.Trim(plan.Window, items)
 	if err != nil {
-		return paginator.Page[T, Info]{}, err
+		return Page[T]{}, err
 	}
 	if plan.Direction == Backward {
 		kept = slices.Clone(kept)
 		slices.Reverse(kept)
 	}
-	info := Info{Direction: plan.Direction, Size: plan.Size, Cursor: plan.cursor}
+	page := Page[T]{Items: kept, HasMore: more, Direction: plan.Direction, Size: plan.Size, Cursor: plan.cursor}
 	if len(kept) > 0 {
-		if info.StartCursor, err = p.encode(kept[0], plan.scope); err != nil {
-			return paginator.Page[T, Info]{}, err
+		if page.StartCursor, err = p.encode(kept[0], plan.scope); err != nil {
+			return Page[T]{}, err
 		}
-		if info.EndCursor, err = p.encode(kept[len(kept)-1], plan.scope); err != nil {
-			return paginator.Page[T, Info]{}, err
+		if page.EndCursor, err = p.encode(kept[len(kept)-1], plan.scope); err != nil {
+			return Page[T]{}, err
 		}
 	}
-	return paginator.Page[T, Info]{Items: kept, Info: info, HasMore: more}, nil
+	return page, nil
 }
 
 // encode returns the cursor for item's position.

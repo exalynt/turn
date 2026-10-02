@@ -73,17 +73,16 @@ func (q OffsetQuery) params() (page, size string) {
 // URL selecting a page, such as one from [OffsetQuery.URL]. Every selector it
 // receives has the page's Size, since page numbers cover the same items only
 // at the same size. A nil URL leaves that link out.
-func OffsetLinks[T any](page paginator.Page[T, offset.Info], url func(offset.Selector) *url.URL) []Link {
-	info := page.Info
+func OffsetLinks[T any](page offset.Page[T], url func(offset.Selector) *url.URL) []Link {
 	at := func(rel string, number int64) Link {
-		return Link{Rel: rel, URL: url(offset.Selector{Number: number, Size: info.Size})}
+		return Link{Rel: rel, URL: url(offset.Selector{Number: number, Size: page.Size})}
 	}
 	links := []Link{at(RelFirst, 1)}
-	if info.Number > 1 {
-		links = append(links, at(RelPrev, info.Number-1))
+	if page.Number > 1 {
+		links = append(links, at(RelPrev, page.Number-1))
 	}
-	if page.HasMore && info.Number < math.MaxInt64 {
-		links = append(links, at(RelNext, info.Number+1))
+	if page.HasMore && page.Number < math.MaxInt64 {
+		links = append(links, at(RelNext, page.Number+1))
 	}
 	return links
 }

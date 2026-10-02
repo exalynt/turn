@@ -36,13 +36,20 @@ type Plan struct {
 	Offset int64
 }
 
-// Info describes a numbered page.
+// Page is one numbered page of items of type T.
 //
-// When [paginator.Page.HasMore] is true, page Number + 1 continues the listing.
-// A Number above 1 permits navigating to an earlier page, but does not
-// establish that earlier pages still hold items. Selecting a different Size
-// changes which items each page number covers.
-type Info struct {
+// When HasMore is true, page Number + 1 continues the listing. A Number above
+// 1 permits navigating to an earlier page, but does not establish that earlier
+// pages still hold items. Selecting a different Size changes which items each
+// page number covers.
+type Page[T any] struct {
+	// Items holds at most Size items, in canonical order. It is never nil,
+	// and appending to it never overwrites the fetched batch.
+	Items []T
+
+	// HasMore reports whether the query found an item after this page.
+	HasMore bool
+
 	// Number is the one-based page number.
 	Number int64
 
@@ -120,19 +127,15 @@ func (p *Paginator[T]) Prepare(selector Selector) (Plan, error) {
 // It returns an error wrapping [paginator.ErrInvalidPlan] if this paginator
 // could not have prepared plan, and [paginator.ErrInvalidBatch] if items holds
 // more than plan.FetchLimit() items.
-func (p *Paginator[T]) Finish(plan Plan, items []T) (paginator.Page[T, Info], error) {
+func (p *Paginator[T]) Finish(plan Plan, items []T) (Page[T], error) {
 	if err := p.check(plan); err != nil {
-		return paginator.Page[T, Info]{}, err
+		return Page[T]{}, err
 	}
 	kept, more, err := paging.Trim(plan.Window, items)
 	if err != nil {
-		return paginator.Page[T, Info]{}, err
+		return Page[T]{}, err
 	}
-	return paginator.Page[T, Info]{
-		Items:   kept,
-		Info:    Info{Number: plan.Number, Size: plan.Size},
-		HasMore: more,
-	}, nil
+	return Page[T]{Items: kept, HasMore: more, Number: plan.Number, Size: plan.Size}, nil
 }
 
 // offset returns (number - 1) * size, or an error if it exceeds maxOffset.
