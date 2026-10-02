@@ -6,7 +6,7 @@
 //
 // [OffsetQuery] and [CursorQuery] parse a selector from a URL query and build
 // the URL that selects a page. [OffsetLinks] and [CursorLinks] work out which
-// pages to link to from a finished page, asking a URL function for each one,
+// pages to link to from a page, asking a URL function for each one,
 // and [FormatLinks] turns the links into a header value:
 //
 //	var q turnhttp.OffsetQuery

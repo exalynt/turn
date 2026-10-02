@@ -17,7 +17,7 @@
 //		store.Desc("id", func(p UserPosition) any { return p.ID }),
 //	)
 //
-// List then runs the prepare, query, finish flow around a [Fetch] function
+// List then runs the plan, fetch, page flow around a [Fetch] function
 // that renders the Query, runs it, and returns the items:
 //
 //	page, err := users.List(ctx, selector, scope, func(ctx context.Context, q store.Query) ([]User, error) {

@@ -21,9 +21,9 @@
 //     cursors, with a default implementation in
 //     [github.com/exalynt/turn/codec/plain].
 //
-// Each paginator follows the same flow: Prepare a plan from a selector, run
-// the consumer's own query using the plan, then Finish the plan with the
-// fetched items to get a page.
+// Each paginator follows the same three steps: plan, fetch, page. Plan turns a
+// selector into a plan, the consumer fetches items with its own query using the
+// plan, and Page builds a page from the plan and the fetched items.
 //
 // # Optional layers
 //

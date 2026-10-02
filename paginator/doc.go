@@ -1,25 +1,25 @@
 // Package paginator holds what every paginator shares: the size [Policy], the
-// prepared query [Window], and the errors. The paginators themselves, each
+// planned query [Window], and the errors. The paginators themselves, each
 // with its own page type, live in its subpackages:
 // [github.com/exalynt/turn/paginator/offset] serves numbered pages and
 // [github.com/exalynt/turn/paginator/cursor] serves keyset pagination.
 //
-// Every paginator follows the same flow: Prepare a plan from a selector, run
-// the consumer's own query using the plan, then Finish the plan with the
-// fetched items to get a page.
+// Every paginator follows the same three steps: plan, fetch, page. Plan turns
+// a selector into a plan, the consumer fetches items with its own query using
+// the plan, and Page builds a page from the plan and the fetched items.
 //
-//	plan, err := p.Prepare(selector)
+//	plan, err := p.Plan(selector)
 //	// handle err
 //	rows, err := fetch(ctx, plan) // at most plan.Limit() rows
 //	// handle err
-//	page, err := p.Finish(plan, rows)
+//	page, err := p.Page(plan, rows)
 //
-// Each plan asks for one item more than the page size. Finish drops that
+// Each plan asks for one item more than the page size. Page drops that
 // lookahead item and reports its presence as the page's HasMore, so no
-// paginator needs a count query. Finish expects the complete result of the
-// query: fewer than Limit items means the query was exhausted, so a failed
-// or partial fetch must be handled before calling it. Plans must reach Finish
-// unchanged; Finish rejects plans its paginator could not have prepared.
+// paginator needs a count query. Page expects the complete result of the
+// fetch: fewer than Limit items means the query was exhausted, so a failed
+// or partial fetch must be handled before calling it. Plans must reach Page
+// unchanged; Page rejects plans its paginator could not have produced.
 //
 // Every paginator needs a deterministic canonical order, ideally ending with a
 // unique tie-breaker. None promises a consistent snapshot across requests.

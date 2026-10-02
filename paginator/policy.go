@@ -15,15 +15,15 @@ type Policy struct {
 	MaxSize int
 }
 
-// Window is the size of a prepared query. Every paginator's plan embeds it.
+// Window is the size of a planned query. Every paginator's plan embeds it.
 type Window struct {
 	// Size is the most items the page will hold. It is at least 1 in a
-	// prepared plan.
+	// paginator's plan.
 	Size int
 }
 
 // Limit returns how many items the consumer's query should fetch: Size plus
-// one lookahead item, which tells Finish whether more items exist without a
+// one lookahead item, which tells Page whether more items exist without a
 // count query.
 func (w Window) Limit() int {
 	return w.Size + 1

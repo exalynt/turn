@@ -57,8 +57,8 @@ var (
 	// a negative size policy or a missing codec.
 	ErrInvalidOptions = errors.New("turn: invalid options")
 
-	// ErrInvalidPlan reports a plan passed to Finish that the paginator could
-	// not have prepared, such as a zero plan or one with altered fields.
+	// ErrInvalidPlan reports a plan passed to Page that the paginator could
+	// not have produced, such as a zero plan or one with altered fields.
 	ErrInvalidPlan = errors.New("turn: invalid plan")
 
 	// ErrInvalidBatch reports a fetched batch with more items than the plan's

@@ -28,7 +28,7 @@ type CursorQuery struct {
 // It returns an error wrapping [paginator.ErrInvalidDirection] if both the
 // after and before parameters are present, and [paginator.ErrInvalidSize] if
 // the size is not an integer. Parse does not check the size against the
-// policy or decode the cursor; the paginator's Prepare does.
+// policy or decode the cursor; the paginator's Plan method does.
 func (q CursorQuery) Parse(values url.Values) (cursor.Selector, error) {
 	after, before, size := q.params()
 	if values.Has(after) && values.Has(before) {

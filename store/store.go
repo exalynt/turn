@@ -73,7 +73,7 @@ func NewCursor[T, P any](p *cursor.Paginator[T, P], keys ...Key[P]) (*Cursor[T, 
 }
 
 // Query returns the query for plan, which must come from the paginator's
-// Prepare. A Backward plan reverses every key and keeps the boundary, so the
+// Plan method. A Backward plan reverses every key and keeps the boundary, so the
 // query always selects items after [Query.After].
 //
 // It returns an error wrapping [paginator.ErrInvalidCursor] if a key's value
@@ -97,11 +97,11 @@ func (c *Cursor[T, P]) Query(plan cursor.Plan[P]) (Query, error) {
 	return q, nil
 }
 
-// List prepares selector in scope, fetches the page's items with fetch, and
-// finishes the page. It returns the errors of the paginator's Prepare and
-// Finish, the error of [Cursor.Query], and fetch's error unchanged.
+// List plans selector in scope, fetches the page's items with fetch, and
+// builds the page. It returns the errors of the paginator's Plan and Page
+// methods, the error of [Cursor.Query], and fetch's error unchanged.
 func (c *Cursor[T, P]) List(ctx context.Context, selector cursor.Selector, scope string, fetch Fetch[T]) (cursor.Page[T], error) {
-	plan, err := c.paginator.Prepare(selector, scope)
+	plan, err := c.paginator.Plan(selector, scope)
 	if err != nil {
 		return cursor.Page[T]{}, err
 	}
@@ -113,7 +113,7 @@ func (c *Cursor[T, P]) List(ctx context.Context, selector cursor.Selector, scope
 	if err != nil {
 		return cursor.Page[T]{}, err
 	}
-	return c.paginator.Finish(plan, items)
+	return c.paginator.Page(plan, items)
 }
 
 // Offset pairs a numbered-page paginator with its listing's sort order.
@@ -140,16 +140,16 @@ func NewOffset[T any](p *offset.Paginator[T], order ...Sort) (*Offset[T], error)
 }
 
 // Query returns the query for plan, which must come from the paginator's
-// Prepare.
+// Plan method.
 func (o *Offset[T]) Query(plan offset.Plan) Query {
 	return Query{Sort: slices.Clone(o.order), Limit: plan.Limit(), Offset: plan.Offset}
 }
 
-// List prepares selector, fetches the page's items with fetch, and finishes
-// the page. It returns the errors of the paginator's Prepare and Finish, and
+// List plans selector, fetches the page's items with fetch, and builds the
+// page. It returns the errors of the paginator's Plan and Page methods, and
 // fetch's error unchanged.
 func (o *Offset[T]) List(ctx context.Context, selector offset.Selector, fetch Fetch[T]) (offset.Page[T], error) {
-	plan, err := o.paginator.Prepare(selector)
+	plan, err := o.paginator.Plan(selector)
 	if err != nil {
 		return offset.Page[T]{}, err
 	}
@@ -157,7 +157,7 @@ func (o *Offset[T]) List(ctx context.Context, selector offset.Selector, fetch Fe
 	if err != nil {
 		return offset.Page[T]{}, err
 	}
-	return o.paginator.Finish(plan, items)
+	return o.paginator.Page(plan, items)
 }
 
 // checkOrder reports whether order is a usable sort order.

@@ -24,7 +24,8 @@ type OffsetQuery struct {
 //
 // It returns an error wrapping [paginator.ErrInvalidPage] if the page is not
 // an integer and [paginator.ErrInvalidSize] if the size is not. Parse does not
-// check either against the paginator's limits; the paginator's Prepare does.
+// check either against the paginator's limits; the paginator's Plan method
+// does.
 func (q OffsetQuery) Parse(values url.Values) (offset.Selector, error) {
 	page, size := q.params()
 	number, err := parseInt(values, page, 64, paginator.ErrInvalidPage)

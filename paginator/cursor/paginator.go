@@ -45,15 +45,15 @@ type Selector struct {
 	Cursor codec.Cursor
 }
 
-// Plan is a prepared keyset query over positions of type P.
+// Plan describes the keyset query for one page over positions of type P.
 //
 // For a Forward plan, the consumer selects items strictly after Boundary in
 // canonical order; for a Backward plan, items strictly before Boundary in
 // reverse canonical order. A nil Boundary selects from the start or end of the
 // listing respectively. Either way the consumer fetches at most Limit items.
 //
-// Create plans with [Paginator.Prepare] and pass them to Finish
-// unchanged; a plan carries the scope and cursor it was prepared for.
+// Create plans with [Paginator.Plan] and pass them to [Paginator.Page]
+// unchanged; a plan carries the scope and cursor it was planned for.
 type Plan[P any] struct {
 	paginator.Window
 
@@ -87,7 +87,7 @@ type Page[T any] struct {
 	// Direction is the direction the page was read in.
 	Direction Direction
 
-	// Size is the page size the page was prepared with.
+	// Size is the page size the page was planned with.
 	Size int
 
 	// Cursor is the selector's cursor the page was read from, or empty if the
@@ -118,9 +118,9 @@ type Options[T, P any] struct {
 	Position func(T) P
 }
 
-// Paginator prepares and finishes keyset queries for items of type T
-// ordered by positions of type P. Construct one per listing with [New]
-// and reuse it; it is safe for concurrent use if its codec and position
+// Paginator plans keyset queries for items of type T ordered by positions
+// of type P and builds pages from their results. Construct one per listing
+// with [New] and reuse it; it is safe for concurrent use if its codec and position
 // function are.
 type Paginator[T, P any] struct {
 	policy   paginator.Policy
@@ -145,14 +145,14 @@ func New[T, P any](options Options[T, P]) (*Paginator[T, P], error) {
 	return &Paginator[T, P]{policy: policy, codec: options.Codec, position: options.Position}, nil
 }
 
-// Prepare validates selector, decodes its cursor for scope, and returns the
+// Plan validates selector, decodes its cursor for scope, and returns the
 // plan for the consumer's query.
 //
 // It returns an error wrapping [paginator.ErrInvalidDirection] or
 // [paginator.ErrInvalidSize] for an invalid selector, and
 // [paginator.ErrInvalidCursor], together with the codec's error, if the cursor
 // does not decode for scope.
-func (p *Paginator[T, P]) Prepare(selector Selector, scope string) (Plan[P], error) {
+func (p *Paginator[T, P]) Plan(selector Selector, scope string) (Plan[P], error) {
 	if !selector.Direction.valid() {
 		return Plan[P]{}, fmt.Errorf("%w: %d", paginator.ErrInvalidDirection, selector.Direction)
 	}
@@ -171,16 +171,16 @@ func (p *Paginator[T, P]) Prepare(selector Selector, scope string) (Plan[P], err
 	return plan, nil
 }
 
-// Finish builds the page from items, the result of running plan's query in
+// Page builds the page from items, the result of running plan's query in
 // the plan's direction. It trims the lookahead item, sets HasMore if it was
 // present, returns Backward items in canonical order, and encodes the cursors
-// of the first and last items. Finish never reorders or modifies items.
+// of the first and last items. Page never reorders or modifies items.
 //
 // It returns an error wrapping [paginator.ErrInvalidPlan] if this paginator
-// could not have prepared plan, [paginator.ErrInvalidBatch] if items holds more
+// could not have produced plan, [paginator.ErrInvalidBatch] if items holds more
 // than plan.Limit() items, and the codec's error if encoding a cursor
 // fails.
-func (p *Paginator[T, P]) Finish(plan Plan[P], items []T) (Page[T], error) {
+func (p *Paginator[T, P]) Page(plan Plan[P], items []T) (Page[T], error) {
 	if !paging.Allows(p.policy, plan.Window) || !plan.Direction.valid() {
 		return Page[T]{}, fmt.Errorf("%w: direction %d at size %d", paginator.ErrInvalidPlan, plan.Direction, plan.Size)
 	}

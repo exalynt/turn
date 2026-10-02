@@ -21,10 +21,10 @@ type Selector struct {
 	Size int
 }
 
-// Plan is a prepared numbered-page query. The consumer skips Offset
+// Plan describes the query for one numbered page. The consumer skips Offset
 // items of its canonically ordered query and fetches at most Limit items.
 //
-// Create plans with [Paginator.Prepare] and pass them to Finish
+// Create plans with [Paginator.Plan] and pass them to [Paginator.Page]
 // unchanged.
 type Plan struct {
 	paginator.Window
@@ -53,7 +53,7 @@ type Page[T any] struct {
 	// Number is the one-based page number.
 	Number int64
 
-	// Size is the page size the page was prepared with.
+	// Size is the page size the page was planned with.
 	Size int
 }
 
@@ -68,9 +68,9 @@ type Options struct {
 	MaxOffset *int64
 }
 
-// Paginator prepares and finishes numbered-page queries for items of
-// type T. Construct one per listing with [New] and reuse it; it is safe
-// for concurrent use.
+// Paginator plans numbered-page queries for items of type T and builds
+// pages from their results. Construct one per listing with [New] and reuse
+// it; it is safe for concurrent use.
 type Paginator[T any] struct {
 	policy    paginator.Policy
 	maxOffset int64
@@ -94,14 +94,14 @@ func New[T any](options Options) (*Paginator[T], error) {
 	return &Paginator[T]{policy: policy, maxOffset: maxOffset}, nil
 }
 
-// Prepare validates selector and returns the plan for the consumer's query.
+// Plan validates selector and returns the plan for the consumer's query.
 //
 // It returns an error wrapping [paginator.ErrInvalidSize] or
 // [paginator.ErrInvalidPage] for an invalid selector, and
 // [paginator.ErrOffsetTooLarge] if the page's offset exceeds MaxOffset or the
-// int64 range. A page past the end of the data is not an error; it finishes as
-// an empty page.
-func (p *Paginator[T]) Prepare(selector Selector) (Plan, error) {
+// int64 range. A page past the end of the data is not an error; it becomes an
+// empty page.
+func (p *Paginator[T]) Plan(selector Selector) (Plan, error) {
 	window, err := paging.NewWindow(p.policy, selector.Size)
 	if err != nil {
 		return Plan{}, err
@@ -120,14 +120,14 @@ func (p *Paginator[T]) Prepare(selector Selector) (Plan, error) {
 	return Plan{Window: window, Number: number, Offset: offset}, nil
 }
 
-// Finish builds the page from items, the result of running plan's query. It
-// trims the lookahead item and sets HasMore if it was present. Finish never
+// Page builds the page from items, the result of running plan's query. It
+// trims the lookahead item and sets HasMore if it was present. Page never
 // reorders or modifies items.
 //
 // It returns an error wrapping [paginator.ErrInvalidPlan] if this paginator
-// could not have prepared plan, and [paginator.ErrInvalidBatch] if items holds
+// could not have produced plan, and [paginator.ErrInvalidBatch] if items holds
 // more than plan.Limit() items.
-func (p *Paginator[T]) Finish(plan Plan, items []T) (Page[T], error) {
+func (p *Paginator[T]) Page(plan Plan, items []T) (Page[T], error) {
 	if err := p.check(plan); err != nil {
 		return Page[T]{}, err
 	}
@@ -147,7 +147,7 @@ func (p *Paginator[T]) offset(number int64, size int) (int64, error) {
 	return (number - 1) * int64(size), nil
 }
 
-// check reports whether p could have prepared plan.
+// check reports whether p could have produced plan.
 func (p *Paginator[T]) check(plan Plan) error {
 	if !paging.Allows(p.policy, plan.Window) || plan.Number < 1 {
 		return fmt.Errorf("%w: page %d at size %d", paginator.ErrInvalidPlan, plan.Number, plan.Size)

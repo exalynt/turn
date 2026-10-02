@@ -53,13 +53,13 @@ func NewUserRepository(db *sql.DB) (*UserRepository, error) {
 }
 
 func (r *UserRepository) List(ctx context.Context, selector offset.Selector) (offset.Page[User], error) {
-    // 1. Prepare: validate the selection and work out what the query needs.
-    plan, err := r.pages.Prepare(selector)
+    // 1. Plan: validate the selection and work out what the query needs.
+    plan, err := r.pages.Plan(selector)
     if err != nil {
         return offset.Page[User]{}, err
     }
 
-    // 2. Query: your SQL, your filters, your row mapping.
+    // 2. Fetch: your SQL, your filters, your row mapping.
     rows, err := r.db.QueryContext(ctx, `
         SELECT id, name, created_at FROM users
         ORDER BY created_at DESC, id DESC
@@ -73,8 +73,8 @@ func (r *UserRepository) List(ctx context.Context, selector offset.Selector) (of
         return offset.Page[User]{}, err
     }
 
-    // 3. Finish: shape the fetched rows into a page.
-    return r.pages.Finish(plan, users)
+    // 3. Page: shape the fetched rows into a page.
+    return r.pages.Page(plan, users)
 }
 ```
 
@@ -106,13 +106,13 @@ Every listing uses the same four pieces. The selector, plan, and page differ bet
 
 `T` is your item type. `P` is a cursor *position*, the values that locate one item in the listing's order (see [Define a position](#define-a-position)).
 
-### Prepare, query, finish
+### Plan, fetch, page
 
-1. **Prepare** a plan from a selector. This validates the selector against the size policy and works out what the query needs.
-2. **Query** your own store using the plan, fetching at most `plan.Limit()` items.
-3. **Finish** the plan with the fetched items to get a page.
+1. **Plan** the query from a selector. This validates the selector against the size policy and works out what the query needs.
+2. **Fetch** items from your own store using the plan, at most `plan.Limit()` of them.
+3. **Page** the fetched items with the plan to get a page.
 
-`Limit()` is the page size plus one. That extra lookahead item tells `Finish` whether more items exist, so neither strategy needs a `COUNT` query. `Finish` removes it before returning the page. Both page types hold the same two fields first, followed by what that strategy needs to navigate:
+`Limit()` is the page size plus one. That extra lookahead item tells `Page` whether more items exist, so neither strategy needs a `COUNT` query. `Page` removes it before returning the page. Both page types hold the same two fields first, followed by what that strategy needs to navigate:
 
 ```go
 Items   []T  // at most Size items, in canonical order; never nil
@@ -165,7 +165,7 @@ A page deeper than `MaxOffset` is rejected with `ErrOffsetTooLarge`.
 
 ### Query
 
-The plan's `Offset` and `Limit()` map directly onto `OFFSET` and `LIMIT`, as in the [quick start](#quick-start). `offset.Selector{Number: 3, Size: 25}` prepares `Offset` 50 and `Limit()` 26. A zero `Number` means page 1. A page past the end of the data isn't an error; it comes back empty.
+The plan's `Offset` and `Limit()` map directly onto `OFFSET` and `LIMIT`, as in the [quick start](#quick-start). `offset.Selector{Number: 3, Size: 25}` plans `Offset` 50 and `Limit()` 26. A zero `Number` means page 1. A page past the end of the data isn't an error; it comes back empty.
 
 ### Navigate
 
@@ -225,19 +225,19 @@ cursors, err := cursor.New(cursor.Options[User, UserPosition]{
 
 ### Name the scope
 
-`Prepare` takes a scope alongside the selector. The scope is a string naming what a cursor is valid for: the resource, the filters, the caller's authorization scope, and the ordering. Your codec receives it when encoding and decoding, so a cursor from one listing can't be replayed against another. A listing of active users, newest first, might use `"users:status=active:created_at_desc"`.
+`Plan` takes a scope alongside the selector. The scope is a string naming what a cursor is valid for: the resource, the filters, the caller's authorization scope, and the ordering. Your codec receives it when encoding and decoding, so a cursor from one listing can't be replayed against another. A listing of active users, newest first, might use `"users:status=active:created_at_desc"`.
 
 ### Query by cursor
 
 The plan tells your query where to start and which way to read:
 
 - **`cursor.Forward`** selects items strictly after `plan.Boundary`, in canonical order.
-- **`cursor.Backward`** selects items strictly before `plan.Boundary`, in **reverse** canonical order. `Finish` flips them back.
+- **`cursor.Backward`** selects items strictly before `plan.Boundary`, in **reverse** canonical order. `Page` flips them back.
 - A nil `Boundary` (no cursor in the selector) starts at the beginning for `Forward` and at the end for `Backward`.
 
 ```go
 func (r *UserRepository) ListByCursor(ctx context.Context, selector cursor.Selector) (cursor.Page[User], error) {
-    plan, err := r.cursors.Prepare(selector, "users:created_at_desc")
+    plan, err := r.cursors.Plan(selector, "users:created_at_desc")
     if err != nil {
         return cursor.Page[User]{}, err
     }
@@ -266,7 +266,7 @@ func (r *UserRepository) ListByCursor(ctx context.Context, selector cursor.Selec
         return cursor.Page[User]{}, err
     }
 
-    return r.cursors.Finish(plan, users)
+    return r.cursors.Page(plan, users)
 }
 ```
 
@@ -302,10 +302,10 @@ Every error turn returns wraps one of these sentinels from the `paginator` packa
 | `ErrInvalidDirection` | Selector | Direction isn't `Forward` or `Backward` (or, from `http`, both `after` and `before` are set) |
 | `ErrInvalidCursor` | Selector | The codec couldn't decode the cursor for this scope, or (from `store`) a keyset value in it is null |
 | `ErrInvalidOptions` | Usage | A paginator's or `store` wrapper's configuration is invalid; fix it at startup |
-| `ErrInvalidPlan` | Usage | `Finish` got a plan this paginator didn't prepare, or one that was changed |
+| `ErrInvalidPlan` | Usage | `Page` got a plan this paginator didn't produce, or one that was changed |
 | `ErrInvalidBatch` | Usage | The query returned more than `Limit()` items |
 
-`Finish` on a cursor paginator can also return an error from your codec's `Encode`.
+`Page` on a cursor paginator can also return an error from your codec's `Encode`.
 
 `paginator.IsSelectorError` reports whether an error is in the selector group, so you can report it as bad input, such as an HTTP 400 or a CLI usage message, and treat everything else as your own failure:
 
@@ -322,12 +322,12 @@ case err != nil:
 ## Things to get right
 
 - **Use a deterministic order** that ends with a unique column, such as `id`. Without one, items with equal sort values can repeat or go missing between pages.
-- **Return the whole query result to `Finish`.** Fewer than `Limit()` items tells turn the listing is exhausted. If the query fails, return its error rather than finishing a partial batch.
-- **Don't change plans.** Pass the plan from `Prepare` to `Finish` as it is. `Finish` rejects plans it couldn't have produced.
+- **Return the whole query result to `Page`.** Fewer than `Limit()` items tells turn the listing is exhausted. If the query fails, return its error rather than building a page from a partial batch.
+- **Don't change plans.** Pass the plan from `Plan` to `Page` as it is. `Page` rejects plans it couldn't have produced.
 - **Neither strategy is a snapshot.** Inserts and deletes between requests shift numbered pages, and updates to sort columns can move items across cursor boundaries. Transactions and snapshots are up to you.
 - **Deep offsets are slow.** The database still reads every skipped row. Set `MaxOffset`, or use cursors for large or unbounded listings.
 
-`Finish` never reorders or modifies the slice you pass in, and appending to `page.Items` never overwrites it.
+`Page` never reorders or modifies the slice you pass in, and appending to `page.Items` never overwrites it.
 
 ## Optional: query adapters
 
@@ -351,7 +351,7 @@ r.usersByPage, err = store.NewOffset(pages,
 
 Each key names a field and, for cursors, how to read its value from a position. List the keys in the same order as your position describes, ending with a unique one.
 
-`List` runs the whole prepare, query, finish flow. It hands your function a `store.Query`, which says how to sort, where the keyset boundary lies, and how many items to fetch. An adapter turns that into your database's syntax.
+`List` runs the whole plan, fetch, page flow. It hands your function a `store.Query`, which says how to sort, where the keyset boundary lies, and how many items to fetch. An adapter turns that into your database's syntax.
 
 ### SQL
 
@@ -477,7 +477,7 @@ The core knows nothing about HTTP, and turn never writes responses: the status, 
 
 To use other names, set the fields, for example `turnhttp.OffsetQuery{Page: "p", Size: "per_page"}`. The defaults are the constants `ParamPage`, `ParamSize`, `ParamAfter`, and `ParamBefore`. Parameter names are part of your API, so changing them breaks URLs your clients already hold. If your API carries pagination some other way, such as in a request body, build the `offset.Selector` or `cursor.Selector` yourself.
 
-`Parse` only parses. It reports a value that isn't an integer, or both `after` and `before`, using the same [errors](#errors) as `Prepare`, which still checks the size against the policy and decodes the cursor:
+`Parse` only parses. It reports a value that isn't an integer, or both `after` and `before`, using the same [errors](#errors) as `Plan`, which still checks the size against the policy and decodes the cursor:
 
 ```go
 var q turnhttp.OffsetQuery
@@ -511,7 +511,7 @@ func (h *Handler) ListUsers(w http.ResponseWriter, r *http.Request) {
 
 ### Link headers
 
-The [`Link` header](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Link) (RFC 8288) is the standard way to point clients at adjacent pages. `turnhttp.OffsetLinks` and `turnhttp.CursorLinks` work out which pages to link to from a finished page, and call a function you supply to get each one's URL. `turnhttp.FormatLinks` turns the result into a header value:
+The [`Link` header](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Link) (RFC 8288) is the standard way to point clients at adjacent pages. `turnhttp.OffsetLinks` and `turnhttp.CursorLinks` work out which pages to link to from a page, and call a function you supply to get each one's URL. `turnhttp.FormatLinks` turns the result into a header value:
 
 ```http
 Link: </users?page=1&size=25>; rel="first", </users?page=3&size=25>; rel="next"
