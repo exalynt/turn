@@ -1,6 +1,6 @@
 # Copy to compose.override.yml for local development.
 #
-# Publishes each database's port on the host so integration tests run with
+# Publishes each database's port on the host so end-to-end tests run with
 # `go test` can reach them on localhost. Change the left-hand numbers to use
 # different host ports, for example if another project's stack already holds
 # 5432.

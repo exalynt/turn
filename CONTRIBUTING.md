@@ -25,6 +25,7 @@ The repository holds more than one Go module:
 | --- | --- | --- |
 | `.` | `github.com/exalynt/turn` | Standard library only |
 | `store/mongo` | `github.com/exalynt/turn/store/mongo` | The MongoDB Go driver |
+| `tests/e2e` | `github.com/exalynt/turn/tests/e2e` | The PostgreSQL, MySQL, and MongoDB drivers; never imported |
 
 Go commands only see the module of the directory they run in, so `go build ./...` at the root skips `store/mongo`. The Makefile targets run in every module; when you add a module, add it to `MODULES` in the `Makefile` and to the module matrix in `.github/workflows/ci.yml`.
 
@@ -34,7 +35,7 @@ Keep each nested module's `go` directive at the core's version. If the latest dr
 
 ### Test databases
 
-Integration tests check that what turn hands back produces correct pages on real stores. They need [Docker](https://docs.docker.com/get-docker/) with Compose v2. `compose.yml` runs one container per database:
+End-to-end tests check that what turn hands back produces correct pages on real stores. They need [Docker](https://docs.docker.com/get-docker/) with Compose v2. `compose.yml` runs one container per database:
 
 | Service    | Image                | Connection from the host                                     |
 | ---------- | -------------------- | ------------------------------------------------------------ |
@@ -63,9 +64,18 @@ Before opening a pull request, run everything CI checks:
 ```sh
 make check   # go fix, go fmt, go vet, golangci-lint, in every module
 make test    # go test ./..., in every module
+make e2e     # the end-to-end tests, against the test databases
 ```
 
-CI runs build, vet, test, gofmt, and golangci-lint in every module on every pull request and on `main`. CI uses the Go version in `go.mod`, so code that needs a newer Go fails there even if it passes locally. Run `make help` to see every target.
+CI runs build, vet, test, gofmt, and golangci-lint in every module on every pull request and on `main`, and runs the end-to-end tests against the databases from `compose.yml`.
+
+## End-to-end tests
+
+The end-to-end tests in `tests/e2e` use turn as a consumer would: they import its exported packages by module path, and each test walks one common flow's happy path, such as paging through a listing with cursors on PostgreSQL or following an HTTP API's `Link` headers, against a real database. `tests/e2e` is its own module so it can import the nested adapter modules, and its tests carry the `e2e` build tag so `make test` doesn't need databases.
+
+`make e2e` expects the databases on the host ports above. To use other ports, set the connection strings from the [Test databases](#test-databases) table in `TURN_POSTGRES_URL`, `TURN_MYSQL_DSN`, and `TURN_MONGO_URI`. Each test creates its own table or collection and drops it at the end.
+
+Add a test when you add a flow consumers will commonly follow, such as a new adapter. Edge cases and failure paths aren't tested here. CI uses the Go version in `go.mod`, so code that needs a newer Go fails there even if it passes locally. Run `make help` to see every target.
 
 ## Design principles
 

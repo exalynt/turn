@@ -1,8 +1,8 @@
-.PHONY: help up down nuke logs ps fix fmt lint vet test check coverage coverage-html
+.PHONY: help up down nuke logs ps fix fmt lint vet test e2e check coverage coverage-html
 
-# Go modules in this repository: the core module and the nested adapter
-# modules, which have their own go.mod.
-MODULES := . store/mongo
+# Go modules in this repository: the core module, the nested adapter modules,
+# and the end-to-end tests, which have their own go.mod.
+MODULES := . store/mongo tests/e2e
 
 # Run a command in every module, stopping at the first failure.
 each = @for m in $(MODULES); do (cd $$m && $(1)) || exit 1; done
@@ -47,6 +47,9 @@ check: fix fmt vet lint ## Everything CI checks, locally
 
 test: ## Run tests
 	$(call each,go test ./...)
+
+e2e: ## Run the end-to-end tests against the test databases (start them with make up)
+	cd tests/e2e && go test -tags e2e ./...
 
 coverage: ## Coverage with a per-function summary
 	go test ./... -coverprofile=coverage.out

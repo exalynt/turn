@@ -12,8 +12,9 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Each job runs once per Go module: the core module and the nested adapter
-# modules. Keep the module list in sync with MODULES in the Makefile.
+# Each check runs once per Go module: the core module, the nested adapter
+# modules, and the end-to-end tests. Keep the module list in sync with MODULES
+# in the Makefile.
 jobs:
   go-build:
     name: Go build (${{ matrix.module }})
@@ -21,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [".", store/mongo]
+        module: [".", store/mongo, tests/e2e]
     defaults:
       run:
         working-directory: ${{ matrix.module }}
@@ -39,7 +40,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [".", store/mongo]
+        module: [".", store/mongo, tests/e2e]
     defaults:
       run:
         working-directory: ${{ matrix.module }}
@@ -57,7 +58,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [".", store/mongo]
+        module: [".", store/mongo, tests/e2e]
     defaults:
       run:
         working-directory: ${{ matrix.module }}
@@ -75,7 +76,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [".", store/mongo]
+        module: [".", store/mongo, tests/e2e]
     defaults:
       run:
         working-directory: ${{ matrix.module }}
@@ -96,7 +97,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        module: [".", store/mongo]
+        module: [".", store/mongo, tests/e2e]
     defaults:
       run:
         working-directory: ${{ matrix.module }}
@@ -110,3 +111,20 @@ jobs:
         with:
           version: v2.9.0
           working-directory: ${{ matrix.module }}
+
+  e2e-test:
+    name: End-to-end tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tests/e2e/go.mod
+          cache-dependency-path: "**/go.sum"
+      - name: Start the test databases
+        run: |
+          cp compose.override.example.yml compose.override.yml
+          docker compose up -d --wait
+      - name: Run end-to-end tests
+        working-directory: tests/e2e
+        run: go test -tags e2e ./...
