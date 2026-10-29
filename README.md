@@ -2,7 +2,10 @@
 
 # Turn
 
-[![Stability: Alpha](https://img.shields.io/badge/stability-alpha-f97316)](https://readme.exalynt.com/how-it-works/stability-levels)
+<a href="https://readme.exalynt.com/how-it-works/stability-levels#stability-alpha"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://design.exalynt.io/stability/alpha-extra-long-dark.svg">
+  <img src="https://design.exalynt.io/stability/alpha-extra-long-light.svg" alt="Stability: Alpha · Developing" height="18">
+</picture></a>
 
 A lightweight Go library for numbered-page and cursor pagination.
 
