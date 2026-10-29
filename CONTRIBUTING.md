@@ -41,7 +41,7 @@ End-to-end tests check that what turn hands back produces correct pages on real 
 | ---------- | -------------------- | ------------------------------------------------------------ |
 | `postgres` | `postgres:18-alpine` | `postgres://turn:turn@localhost:5432/turn?sslmode=disable`   |
 | `mysql`    | `mysql:8.4`          | `turn:turn@tcp(localhost:3306)/turn`                         |
-| `mongo`    | `mongo:8`            | `mongodb://turn:turn@localhost:27017/turn?authSource=admin`  |
+| `mongo`    | `mongo:7.0`          | `mongodb://turn:turn@localhost:27017/turn?authSource=admin`  |
 
 Compose doesn't publish any ports by default. Copy the example override to publish them on the host ports above:
 

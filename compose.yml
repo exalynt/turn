@@ -46,7 +46,10 @@ services:
       retries: 20
 
   mongo:
-    image: mongo:8
+    # MongoDB 8 and later refuse to start on the Linux 6.19+ and Ubuntu 7.0
+    # kernels that GitHub's runners now use (SERVER-121912, SERVER-136848).
+    # 7.0 isn't affected; move up once a release starts on those kernels.
+    image: mongo:7.0
     environment:
       MONGO_INITDB_ROOT_USERNAME: turn
       MONGO_INITDB_ROOT_PASSWORD: turn
