@@ -114,7 +114,10 @@ jobs:
 
   e2e-test:
     name: End-to-end tests
-    runs-on: ubuntu-latest
+    # MongoDB 8 refuses to start on Linux 6.19 and newer, which ubuntu-latest
+    # runs from Ubuntu 26.04 (https://jira.mongodb.org/browse/SERVER-121912).
+    # Return to ubuntu-latest once the mongo:8 image supports it.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -128,3 +131,6 @@ jobs:
       - name: Run end-to-end tests
         working-directory: tests/e2e
         run: go test -tags e2e ./...
+      - name: Show the database logs
+        if: failure()
+        run: docker compose logs
