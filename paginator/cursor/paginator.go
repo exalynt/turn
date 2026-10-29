@@ -159,10 +159,11 @@ func New[T, P any](options Options[T, P]) (*Paginator[T, P], error) {
 // tagged json:"-" are not encoded, so they are not part of the scope. Change
 // the listing name when the ordering changes, so old cursors are rejected.
 //
-// It returns an error wrapping [paginator.ErrInvalidDirection] or
-// [paginator.ErrInvalidSize] for an invalid selector,
-// [paginator.ErrInvalidCursor], together with the codec's error, if the cursor
-// does not decode for scope, and an error if scope cannot be encoded as JSON.
+// It returns an error wrapping [paginator.ErrInvalidDirection] for an invalid
+// direction, a [*paginator.SizeError], which wraps [paginator.ErrInvalidSize],
+// for a size outside the policy, an error wrapping [paginator.ErrInvalidCursor],
+// together with the codec's error, if the cursor does not decode for scope,
+// and an error if scope cannot be encoded as JSON.
 func (p *Paginator[T, P]) Plan(selector Selector, scope ...any) (Plan[P], error) {
 	if !selector.Direction.valid() {
 		return Plan[P]{}, fmt.Errorf("%w: %d", paginator.ErrInvalidDirection, selector.Direction)

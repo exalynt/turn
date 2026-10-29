@@ -202,7 +202,7 @@ pages, err := offset.New[User](offset.Options{
 })
 ```
 
-A page deeper than `MaxOffset` is rejected with `ErrOffsetTooLarge`.
+A page deeper than `MaxOffset` is rejected with a `*paginator.OffsetError`, which wraps `ErrOffsetTooLarge` and holds `MaxNumber`, the deepest page allowed at the requested size.
 
 ### Query
 
@@ -369,6 +369,23 @@ case paginator.IsSelectorError(err):
     // bad input: tell whoever supplied the selector
 case err != nil:
     // a bug or a failed query
+}
+```
+
+To tell a client what's allowed without repeating your options, check for the two typed errors `Plan` returns. A `*paginator.SizeError` reports a size outside the policy and holds its `MaxSize`. A `*paginator.OffsetError` reports a numbered page past `MaxOffset` and holds `MaxNumber`, the deepest page allowed at the requested size:
+
+```go
+var (
+    sizeErr   *paginator.SizeError
+    offsetErr *paginator.OffsetError
+)
+switch {
+case errors.As(err, &sizeErr):
+    msg = fmt.Sprintf("size must be between 1 and %d", sizeErr.MaxSize)
+case errors.Is(err, paginator.ErrInvalidSize):
+    msg = "size must be an integer" // from turnhttp's Parse, before any policy applies
+case errors.As(err, &offsetErr):
+    msg = fmt.Sprintf("page must be at most %d at size %d", offsetErr.MaxNumber, offsetErr.Size)
 }
 ```
 

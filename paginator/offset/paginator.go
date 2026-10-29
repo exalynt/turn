@@ -63,7 +63,7 @@ type Options struct {
 	Policy paginator.Policy
 
 	// MaxOffset, when not nil, caps the offset a selector may reach; deeper
-	// pages are rejected with paginator.ErrOffsetTooLarge. It must not be
+	// pages are rejected with a [*paginator.OffsetError]. It must not be
 	// negative. When nil, only the int64 range limits the offset.
 	MaxOffset *int64
 }
@@ -96,9 +96,10 @@ func New[T any](options Options) (*Paginator[T], error) {
 
 // Plan validates selector and returns the plan for the consumer's query.
 //
-// It returns an error wrapping [paginator.ErrInvalidSize] or
-// [paginator.ErrInvalidPage] for an invalid selector, and
-// [paginator.ErrOffsetTooLarge] if the page's offset exceeds MaxOffset or the
+// It returns a [*paginator.SizeError], which wraps [paginator.ErrInvalidSize],
+// for a size outside the policy, an error wrapping [paginator.ErrInvalidPage]
+// for a negative page, and a [*paginator.OffsetError], which wraps
+// [paginator.ErrOffsetTooLarge], if the page's offset exceeds MaxOffset or the
 // int64 range. A page past the end of the data is not an error; it becomes an
 // empty page.
 func (p *Paginator[T]) Plan(selector Selector) (Plan, error) {
@@ -138,11 +139,13 @@ func (p *Paginator[T]) Page(plan Plan, items []T) (Page[T], error) {
 	return Page[T]{Items: kept, HasMore: more, Number: plan.Number, Size: plan.Size}, nil
 }
 
-// offset returns (number - 1) * size, or an error if it exceeds maxOffset.
+// offset returns (number - 1) * size, or an [*paginator.OffsetError] if it
+// exceeds maxOffset.
 // number and size must be positive.
 func (p *Paginator[T]) offset(number int64, size int) (int64, error) {
-	if number-1 > p.maxOffset/int64(size) {
-		return 0, fmt.Errorf("%w: page %d at size %d", paginator.ErrOffsetTooLarge, number, size)
+	deepest := p.maxOffset / int64(size)
+	if number-1 > deepest {
+		return 0, &paginator.OffsetError{Number: number, Size: size, MaxNumber: deepest + 1}
 	}
 	return (number - 1) * int64(size), nil
 }

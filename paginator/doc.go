@@ -29,7 +29,10 @@
 // # Errors
 //
 // Invalid selectors are reported with [ErrInvalidSize], [ErrInvalidPage],
-// [ErrOffsetTooLarge], [ErrInvalidDirection], and [ErrInvalidCursor].
+// [ErrOffsetTooLarge], [ErrInvalidDirection], and [ErrInvalidCursor]. A size
+// outside the policy is a [*SizeError], which wraps ErrInvalidSize and holds
+// the policy's MaxSize, and a page too deep is an [*OffsetError], which wraps
+// ErrOffsetTooLarge and holds the deepest page allowed.
 // [IsSelectorError] reports whether an error wraps any of them, so the caller
 // can report it as bad input. [ErrInvalidOptions], [ErrInvalidPlan], and
 // [ErrInvalidBatch] report misuse by the consuming code.

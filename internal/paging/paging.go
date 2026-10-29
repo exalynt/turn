@@ -40,10 +40,8 @@ func NewWindow(p paginator.Policy, size int) (paginator.Window, error) {
 	switch {
 	case size == 0:
 		return paginator.Window{Size: p.DefaultSize}, nil
-	case size < 0:
-		return paginator.Window{}, fmt.Errorf("%w: %d is negative", paginator.ErrInvalidSize, size)
-	case size > p.MaxSize:
-		return paginator.Window{}, fmt.Errorf("%w: %d exceeds the maximum of %d", paginator.ErrInvalidSize, size, p.MaxSize)
+	case size < 0 || size > p.MaxSize:
+		return paginator.Window{}, &paginator.SizeError{Size: size, MaxSize: p.MaxSize}
 	}
 	return paginator.Window{Size: size}, nil
 }
