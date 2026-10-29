@@ -9,7 +9,8 @@
 // [Direction]. [Paginator.Page] restores canonical order and encodes the cursors of the
 // first and last items.
 //
-// The scope passed to Plan identifies what a cursor is valid for, such as
-// the resource, filters, authorization scope, and ordering. Cursor checks never
-// replace application authorization.
+// The scope values passed to Plan identify what a cursor is valid for: a
+// name for the listing and its ordering, and the filters its query is built
+// from. Plan encodes them, so a filter added later is covered without
+// changing the call. Cursor checks never replace application authorization.
 package cursor

@@ -1,6 +1,7 @@
 package cursor
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -53,7 +54,7 @@ type Selector struct {
 // listing respectively. Either way the consumer fetches at most Limit items.
 //
 // Create plans with [Paginator.Plan] and pass them to [Paginator.Page]
-// unchanged; a plan carries the scope and cursor it was planned for.
+// unchanged; a plan carries the encoded scope and cursor it was planned for.
 type Plan[P any] struct {
 	paginator.Window
 
@@ -148,11 +149,21 @@ func New[T, P any](options Options[T, P]) (*Paginator[T, P], error) {
 // Plan validates selector, decodes its cursor for scope, and returns the
 // plan for the consumer's query.
 //
+// The scope values identify what a cursor is valid for. Plan encodes them
+// together as JSON, and a cursor issued for different values is rejected.
+// Pass a name for the listing and its ordering, such as
+// "users:created_at_desc", followed by the same filters value the query is
+// built from, so a filter added to it later is covered without changing the
+// call. Every value must be the same on every page of a listing: never include
+// the selector, or each next page is rejected. Unexported fields and fields
+// tagged json:"-" are not encoded, so they are not part of the scope. Change
+// the listing name when the ordering changes, so old cursors are rejected.
+//
 // It returns an error wrapping [paginator.ErrInvalidDirection] or
-// [paginator.ErrInvalidSize] for an invalid selector, and
+// [paginator.ErrInvalidSize] for an invalid selector,
 // [paginator.ErrInvalidCursor], together with the codec's error, if the cursor
-// does not decode for scope.
-func (p *Paginator[T, P]) Plan(selector Selector, scope string) (Plan[P], error) {
+// does not decode for scope, and an error if scope cannot be encoded as JSON.
+func (p *Paginator[T, P]) Plan(selector Selector, scope ...any) (Plan[P], error) {
 	if !selector.Direction.valid() {
 		return Plan[P]{}, fmt.Errorf("%w: %d", paginator.ErrInvalidDirection, selector.Direction)
 	}
@@ -160,9 +171,13 @@ func (p *Paginator[T, P]) Plan(selector Selector, scope string) (Plan[P], error)
 	if err != nil {
 		return Plan[P]{}, err
 	}
-	plan := Plan[P]{Window: window, Direction: selector.Direction, scope: scope, cursor: selector.Cursor}
+	encoded, err := json.Marshal(scope)
+	if err != nil {
+		return Plan[P]{}, fmt.Errorf("turn: encode cursor scope: %w", err)
+	}
+	plan := Plan[P]{Window: window, Direction: selector.Direction, scope: string(encoded), cursor: selector.Cursor}
 	if selector.Cursor != "" {
-		boundary, err := p.codec.Decode(selector.Cursor, scope)
+		boundary, err := p.codec.Decode(selector.Cursor, plan.scope)
 		if err != nil {
 			return Plan[P]{}, fmt.Errorf("%w: %w", paginator.ErrInvalidCursor, err)
 		}

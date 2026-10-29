@@ -45,7 +45,7 @@ Meanwhile turn handles the parts every listing repeats, and gets them right:
 
 - **Both strategies, one model.** Numbered pages and cursors share the same plan, fetch, page flow, size policy, and errors, so a listing can switch strategies without rewriting its handlers.
 - **No `COUNT` query.** One lookahead item tells turn whether another page exists, for both strategies.
-- **Cursors are bound to their listing.** Every cursor plan takes a scope naming the resource, filters, caller, and ordering, and the codec rejects a cursor issued for another one. Replaying a cursor against a different listing is an error, not a wrong page.
+- **Cursors are bound to their listing.** Every cursor plan takes scope values, the listing's name and the filters its query is built from, and the codec rejects a cursor issued for different ones. Replaying a cursor against a different listing is an error, not a wrong page, and a filter added later is covered without touching the scope.
 - **Bad input is an error, not a guess.** An oversized page size is rejected rather than clamped, and a malformed cursor is rejected rather than silently restarting from the first page. `paginator.IsSelectorError` separates bad input from bugs, so an API can answer 400 or 500 correctly.
 - **Keyset queries that keep their index.** The SQL adapter handles backward reads, mixed sort directions, and MySQL's poor index use for row comparisons, and rejects null keyset values instead of silently ending the listing.
 - **Few dependencies.** The core and the SQL and HTTP layers use only the standard library. The MongoDB adapter is a separate module.
@@ -174,12 +174,12 @@ A zero `Size` in a selector means `DefaultSize`. A size above `MaxSize` is rejec
 
 ### Choosing a strategy
 
-|                             | Numbered pages                                               | Cursors                                             |
-| --------------------------- | ------------------------------------------------------------ | --------------------------------------------------- |
-| Client can jump to page _N_ | Yes                                                          | No, only next and previous                          |
-| Stable while data changes   | No: inserts and deletes shift pages                          | Yes, unless an item's sort values change            |
-| Cost of deep pages          | Grows with depth, since the database reads every skipped row | Constant with a suitable index                      |
-| What you provide            | A sort order                                                 | A sort order, a position type, a codec, and a scope |
+|                             | Numbered pages                                               | Cursors                                                  |
+| --------------------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
+| Client can jump to page _N_ | Yes                                                          | No, only next and previous                               |
+| Stable while data changes   | No: inserts and deletes shift pages                          | Yes, unless an item's sort values change                 |
+| Cost of deep pages          | Grows with depth, since the database reads every skipped row | Constant with a suitable index                           |
+| What you provide            | A sort order                                                 | A sort order, a position type, a codec, and scope values |
 
 Use numbered pages for small or bounded listings, and when a UI needs page numbers. Use cursors for large, growing, or infinite-scroll listings and for APIs.
 
@@ -214,7 +214,7 @@ The page holds its `Number` and `Size`. When `page.HasMore` is true, `Number + 1
 
 ## Cursors
 
-Cursor (keyset) pagination continues from the last item a client saw, rather than skipping a number of rows. Setting it up takes four decisions: a position type, a codec, a scope, and the queries for each direction.
+Cursor (keyset) pagination continues from the last item a client saw, rather than skipping a number of rows. Setting it up takes four decisions: a position type, a codec, the scope values, and the queries for each direction.
 
 ### Define a position
 
@@ -266,7 +266,19 @@ cursors, err := cursor.New(cursor.Options[User, UserPosition]{
 
 ### Name the scope
 
-`Plan` takes a scope alongside the selector. The scope is a string naming what a cursor is valid for: the resource, the filters, the caller's authorization scope, and the ordering. Your codec receives it when encoding and decoding, so a cursor from one listing can't be replayed against another. A listing of active users, newest first, might use `"users:status=active:created_at_desc"`.
+`Plan` takes scope values after the selector. They say what a cursor is valid for: `Page` issues cursors for them, and `Plan` rejects a cursor issued for different ones, so a cursor from one listing can't be replayed against another. turn encodes the values together as JSON and hands the result to your codec.
+
+Pass a name for the listing and its ordering, then the same filters value you build the query from:
+
+```go
+plan, err := r.cursors.Plan(selector, "users:created_at_desc", filter)
+```
+
+Because the scope comes from the value the query uses, a field you add to `filter` later is part of the scope without changing the call. A listing without filters passes only its name.
+
+- **Leave the selector out.** Its cursor changes on every page, so a scope that includes it rejects every next page. If your query struct carries the selector, zero it in the copy you pass.
+- **Unexported fields and fields tagged `json:"-"` aren't encoded**, so they aren't part of the scope.
+- **Change the listing name when the ordering changes**, such as `"users:created_at_desc:v2"`, so old cursors are rejected.
 
 ### Query by cursor
 
@@ -311,7 +323,7 @@ func (r *UserRepository) ListByCursor(ctx context.Context, selector cursor.Selec
 }
 ```
 
-If the listing has filters, apply the same filters to the query and include them in the scope.
+If the listing has filters, pass the same filters value you build the query from as a scope value.
 
 Writing the keyset predicate and flipping it for `Backward` by hand is easy to get subtly wrong. The optional [query adapters](#optional-query-adapters) generate that part.
 
@@ -403,17 +415,17 @@ import turnsql "github.com/exalynt/turn/store/sql"
 `turnsql.Render` returns a `turnsql.Clause`: the keyset predicate, `ORDER BY`, the limit clause, and their arguments. The third argument numbers the first placeholder, so the fragments can follow your own arguments. This is the cursor example from above, with a filter added:
 
 ```go
-func (r *UserRepository) ListByCursor(ctx context.Context, selector cursor.Selector) (cursor.Page[User], error) {
-    return r.usersByCursor.List(ctx, selector, "users:status=active:created_at_desc", func(ctx context.Context, q store.Query) ([]User, error) {
+func (r *UserRepository) ListByCursor(ctx context.Context, selector cursor.Selector, status string) (cursor.Page[User], error) {
+    return r.usersByCursor.List(ctx, selector, func(ctx context.Context, q store.Query) ([]User, error) {
         c := turnsql.Render(turnsql.Postgres, q, 2)
         rows, err := r.db.QueryContext(ctx,
             "SELECT id, name, created_at FROM users WHERE status = $1"+c.And()+c.Tail(),
-            append([]any{"active"}, c.Args...)...)
+            append([]any{status}, c.Args...)...)
         if err != nil {
             return nil, err
         }
         return scanUsers(rows)
-    })
+    }, "users:created_at_desc", status)
 }
 ```
 
@@ -450,9 +462,9 @@ import turnmongo "github.com/exalynt/turn/store/mongo"
 `turnmongo.Render` returns the filter, sort, limit, and skip for a `Find`. `f.And` combines the keyset filter with yours:
 
 ```go
-page, err := r.usersByCursor.List(ctx, selector, "users:status=active:created_at_desc", func(ctx context.Context, q store.Query) ([]User, error) {
+page, err := r.usersByCursor.List(ctx, selector, func(ctx context.Context, q store.Query) ([]User, error) {
     f := turnmongo.Render(q)
-    cur, err := r.coll.Find(ctx, f.And(bson.D{{Key: "status", Value: "active"}}), f.Options())
+    cur, err := r.coll.Find(ctx, f.And(bson.D{{Key: "status", Value: status}}), f.Options())
     if err != nil {
         return nil, err
     }
@@ -461,7 +473,7 @@ page, err := r.usersByCursor.List(ctx, selector, "users:status=active:created_at
         return nil, err
     }
     return users, nil
-})
+}, "users:created_at_desc", status)
 ```
 
 Position values must encode to the same BSON type as the stored field. If documents hold a `bson.ObjectID`, keep a `bson.ObjectID` in the position, not its hex string.
@@ -497,7 +509,7 @@ for _, conds := range q.Seek() {
 
 - **Fields are emitted verbatim.** That lets you use qualified names and expressions, such as `u.created_at`, but a field must never come from request input. If clients choose the sort, map their choice through an allowlist of orders you built yourself.
 - **Keyset values can't be null.** A comparison with `NULL` matches nothing, so pages would silently stop. Sort on non-null columns. A cursor whose boundary holds a null is rejected with `ErrInvalidCursor`.
-- **Use the same order everywhere.** The keys, the position type, and the scope describe one ordering. Change them together, and change the scope so old cursors are rejected.
+- **Use the same order everywhere.** The keys, the position type, and the listing name describe one ordering. Change them together, and change the listing name so old cursors are rejected.
 
 ## Optional: HTTP
 

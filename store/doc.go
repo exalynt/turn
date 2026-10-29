@@ -20,9 +20,9 @@
 // List then runs the plan, fetch, page flow around a [Fetch] function
 // that renders the Query, runs it, and returns the items:
 //
-//	page, err := users.List(ctx, selector, scope, func(ctx context.Context, q store.Query) ([]User, error) {
-//		// render q with an adapter, run the query, and scan the rows
-//	})
+//	page, err := users.List(ctx, selector, func(ctx context.Context, q store.Query) ([]User, error) {
+//		// render q with an adapter, apply filter, run the query, and scan the rows
+//	}, "users:created_at_desc", filter)
 //
 // A Query never carries a direction. For a backward read, the sort is already
 // reversed, so every adapter selects items strictly after [Query.After] in

@@ -98,10 +98,11 @@ func (c *Cursor[T, P]) Query(plan cursor.Plan[P]) (Query, error) {
 }
 
 // List plans selector in scope, fetches the page's items with fetch, and
-// builds the page. It returns the errors of the paginator's Plan and Page
-// methods, the error of [Cursor.Query], and fetch's error unchanged.
-func (c *Cursor[T, P]) List(ctx context.Context, selector cursor.Selector, scope string, fetch Fetch[T]) (cursor.Page[T], error) {
-	plan, err := c.paginator.Plan(selector, scope)
+// builds the page. The scope values are passed to the paginator's Plan
+// method, which describes them. It returns the errors of the paginator's Plan
+// and Page methods, the error of [Cursor.Query], and fetch's error unchanged.
+func (c *Cursor[T, P]) List(ctx context.Context, selector cursor.Selector, fetch Fetch[T], scope ...any) (cursor.Page[T], error) {
+	plan, err := c.paginator.Plan(selector, scope...)
 	if err != nil {
 		return cursor.Page[T]{}, err
 	}
