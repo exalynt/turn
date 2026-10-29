@@ -45,7 +45,7 @@ Meanwhile turn handles the parts every listing repeats, and gets them right:
 
 - **Both strategies, one model.** Numbered pages and cursors share the same plan, fetch, page flow, size policy, and errors, so a listing can switch strategies without rewriting its handlers.
 - **No `COUNT` query.** One lookahead item tells turn whether another page exists, for both strategies.
-- **Cursors are bound to their listing.** Every cursor plan takes scope values, the listing's name and the filters its query is built from, and the codec rejects a cursor issued for different ones. Replaying a cursor against a different listing is an error, not a wrong page, and a filter added later is covered without touching the scope.
+- **Cursors are bound to their listing.** Every cursor plan takes scope values, the listing's name and the filters its query is built from, and the codec rejects a cursor issued for different ones. Replaying a cursor against a different listing is an error, not a wrong page, and a filter added later is covered without touching the scope. With the query adapters, cursors are bound to the sort order too.
 - **Bad input is an error, not a guess.** An oversized page size is rejected rather than clamped, and a malformed cursor is rejected rather than silently restarting from the first page. `paginator.IsSelectorError` separates bad input from bugs, so an API can answer 400 or 500 correctly.
 - **Keyset queries that keep their index.** The SQL adapter handles backward reads, mixed sort directions, and MySQL's poor index use for row comparisons, and rejects null keyset values instead of silently ending the listing.
 - **Few dependencies.** The core and the SQL and HTTP layers use only the standard library. The MongoDB adapter is a separate module.
@@ -278,7 +278,7 @@ Because the scope comes from the value the query uses, a field you add to `filte
 
 - **Leave the selector out.** Its cursor changes on every page, so a scope that includes it rejects every next page. If your query struct carries the selector, zero it in the copy you pass.
 - **Unexported fields and fields tagged `json:"-"` aren't encoded**, so they aren't part of the scope.
-- **Change the listing name when the ordering changes**, such as `"users:created_at_desc:v2"`, so old cursors are rejected.
+- **Change the listing name when the ordering changes**, such as `"users:created_at_desc:v2"`, so old cursors are rejected. The [query adapters](#optional-query-adapters)' `store.Cursor` does this for you.
 
 ### Query by cursor
 
@@ -347,16 +347,16 @@ previous := cursor.Selector{Direction: cursor.Backward, Cursor: page.StartCursor
 
 Every error turn returns wraps one of these sentinels from the `paginator` package, so check them with `errors.Is`. They fall into two groups. Selector errors mean the page selection you were given is invalid, whether it came from an HTTP request, command-line flags, or anywhere else. Usage errors mean a bug in the calling code.
 
-| Error                 | Group    | Cause                                                                                               |
-| --------------------- | -------- | --------------------------------------------------------------------------------------------------- |
-| `ErrInvalidSize`      | Selector | Size is negative or above `MaxSize` (or, from `http`, not an integer)                               |
-| `ErrInvalidPage`      | Selector | Page number is negative (or, from `http`, not an integer)                                           |
-| `ErrOffsetTooLarge`   | Selector | Page is deeper than `MaxOffset` allows, or the offset overflows                                     |
-| `ErrInvalidDirection` | Selector | Direction isn't `Forward` or `Backward` (or, from `http`, both `after` and `before` are set)        |
-| `ErrInvalidCursor`    | Selector | The codec couldn't decode the cursor for this scope, or (from `store`) a keyset value in it is null |
-| `ErrInvalidOptions`   | Usage    | A paginator's or `store` wrapper's configuration is invalid; fix it at startup                      |
-| `ErrInvalidPlan`      | Usage    | `Page` got a plan this paginator didn't produce, or one that was changed                            |
-| `ErrInvalidBatch`     | Usage    | The query returned more than `Limit()` items                                                        |
+| Error                 | Group    | Cause                                                                                                               |
+| --------------------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
+| `ErrInvalidSize`      | Selector | Size is negative or above `MaxSize` (or, from `http`, not an integer)                                               |
+| `ErrInvalidPage`      | Selector | Page number is negative (or, from `http`, not an integer)                                                           |
+| `ErrOffsetTooLarge`   | Selector | Page is deeper than `MaxOffset` allows, or the offset overflows                                                     |
+| `ErrInvalidDirection` | Selector | Direction isn't `Forward` or `Backward` (or, from `http`, both `after` and `before` are set)                        |
+| `ErrInvalidCursor`    | Selector | The codec couldn't decode the cursor for this scope, or (from `store`) its values don't fit the keys or one is null |
+| `ErrInvalidOptions`   | Usage    | A paginator's or `store` wrapper's configuration is invalid; fix it at startup                                      |
+| `ErrInvalidPlan`      | Usage    | `Page` got a plan this paginator didn't produce, or one that was changed                                            |
+| `ErrInvalidBatch`     | Usage    | The query returned more than `Limit()` items                                                                        |
 
 `Page` on a cursor paginator can also return an error from your codec's `Encode`.
 
@@ -388,12 +388,12 @@ Everything above works with the core packages alone. The `store` package and its
 
 ### Describe the sort order
 
-`store.Cursor` and `store.Offset` pair a paginator with the listing's sort order. Build them once, next to the paginators:
+`store.Cursor` and `store.Offset` hold a listing's paginator and its sort order. Build them once, for example when you build the repository:
 
 ```go
-r.usersByCursor, err = store.NewCursor(cursors,
-    store.Desc("created_at", func(p UserPosition) any { return p.CreatedAt }),
-    store.Desc("id", func(p UserPosition) any { return p.ID }),
+r.usersByCursor, err = store.NewCursor(store.CursorOptions{Codec: plain.Codec[store.Position]{}},
+    store.Desc("created_at", func(u User) time.Time { return u.CreatedAt }),
+    store.Desc("id", func(u User) string { return u.ID }),
 )
 
 r.usersByPage, err = store.NewOffset(pages,
@@ -402,9 +402,11 @@ r.usersByPage, err = store.NewOffset(pages,
 )
 ```
 
-Each key names a field and, for cursors, how to read its value from a position. List the keys in the same order as your position describes, ending with a unique one.
+Each cursor key names a field and how to read its value from an item. Together the values are the item's position, so `store.Cursor` needs no position type or `Position` function: it builds the paginator itself, from the `Policy` and `Codec` in `store.CursorOptions`. The `Codec` is required, as for `cursor.New`. End the keys with a unique one. Each key's value type must round-trip through `encoding/json` exactly, since cursors hold the values as a JSON array.
 
 `List` runs the whole plan, fetch, page flow. It hands your function a `store.Query`, which says how to sort, where the keyset boundary lies, and how many items to fetch. An adapter turns that into your database's syntax.
+
+A `store.Cursor` binds its cursors to its keys as well as to the scope values you pass, so the scope only needs the listing's name and filters. A cursor issued for another order, or before you changed the keys, is rejected with `ErrInvalidCursor`.
 
 ### SQL
 
@@ -425,7 +427,7 @@ func (r *UserRepository) ListByCursor(ctx context.Context, selector cursor.Selec
             return nil, err
         }
         return scanUsers(rows)
-    }, "users:created_at_desc", status)
+    }, "users", status)
 }
 ```
 
@@ -473,10 +475,37 @@ page, err := r.usersByCursor.List(ctx, selector, func(ctx context.Context, q sto
         return nil, err
     }
     return users, nil
-}, "users:created_at_desc", status)
+}, "users", status)
 ```
 
-Position values must encode to the same BSON type as the stored field. If documents hold a `bson.ObjectID`, keep a `bson.ObjectID` in the position, not its hex string.
+A key's value must encode to the same BSON type as the stored field. If documents hold a `bson.ObjectID`, return a `bson.ObjectID` from the key, not its hex string.
+
+### Let clients choose the order
+
+If clients can choose how a listing is sorted, build one `store.Cursor` per order and map the client's choice to it. That map is the allowlist that keeps request input out of the sort fields. `Reverse` returns the same listing in the opposite order, with every key's direction flipped:
+
+```go
+var (
+    userID      = store.Asc("id", func(u User) string { return u.ID })
+    userCreated = store.Asc("created_at", func(u User) time.Time { return u.CreatedAt })
+    userName    = store.Asc("name", func(u User) string { return u.Name })
+)
+
+usersBy := map[string]*store.Cursor[User]{}
+usersBy["created_at"], err = store.NewCursor(options, userCreated, userID)
+usersBy["name"], err = store.NewCursor(options, userName, userID)
+
+// When listing:
+users, ok := usersBy[sort]
+if !ok {
+    // an unknown sort: report it as bad input
+}
+if descending {
+    users = users.Reverse()
+}
+```
+
+Every order scopes its cursors to its own keys, so a cursor from one order is rejected by another, including its reverse.
 
 ### Writing your own adapter
 
@@ -507,9 +536,9 @@ for _, conds := range q.Seek() {
 
 ### Things to know about adapters
 
-- **Fields are emitted verbatim.** That lets you use qualified names and expressions, such as `u.created_at`, but a field must never come from request input. If clients choose the sort, map their choice through an allowlist of orders you built yourself.
+- **Fields are emitted verbatim.** That lets you use qualified names and expressions, such as `u.created_at`, but a field must never come from request input. If clients choose the sort, map their choice through an allowlist of orders you built yourself, as in [Let clients choose the order](#let-clients-choose-the-order).
 - **Keyset values can't be null.** A comparison with `NULL` matches nothing, so pages would silently stop. Sort on non-null columns. A cursor whose boundary holds a null is rejected with `ErrInvalidCursor`.
-- **Use the same order everywhere.** The keys, the position type, and the listing name describe one ordering. Change them together, and change the listing name so old cursors are rejected.
+- **Changing the keys invalidates cursors.** Cursors are bound to the keys' fields and directions, so renaming a field, even just its alias, rejects every cursor clients already hold for that listing.
 
 ## Optional: HTTP
 
